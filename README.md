@@ -51,14 +51,25 @@ Fill in `STUDENT.md` with a few lines about yourself.
 
 ## Use
 
-1. Export games from chess.com or lichess (PGN, several games per file is fine) into `games/`.
-2. Open Claude Code in this folder and say *"analyse my latest game"*.
-3. The coach runs `analyze.py`, gives you the review, and at the end of the session saves
-   it to `reviews/` and rebuilds the dashboard.
-4. Open `chess.html`.
+1. Open Claude Code in this folder and say *"analyse my latest game"*.
+2. The coach runs `build.py --fetch` to pull your new games from chess.com, runs
+   `analyze.py` on the newest one, gives you the review, and at the end of the session
+   saves it to `reviews/` and rebuilds the dashboard.
+3. Open `chess.html`.
 
-To rebuild by hand: `.venv/bin/python build.py`. Stockfish only runs on games it hasn't
-seen before (results are cached in `cache/`), so rebuilds take well under a second.
+To update the dashboard by hand: `.venv/bin/python build.py --fetch`.
+
+- **Fetching** uses chess.com's public API — no login or key. Each month lands in
+  `games/chesscom-YYYY-MM.pgn`; finished months are downloaded once, the current month is
+  refreshed each run. The first run starts from your oldest game already in `games/`, or
+  from the latest month if there are none; `--since 2025-01` reaches further back. Set
+  `time_classes = ["rapid"]` in `config.toml` to skip blitz, bullet and daily games.
+- **Other sources:** any PGN file dropped into `games/` (a lichess export, a game typed in
+  by hand) is picked up too. The same game in two files is counted once.
+- **Stockfish** only runs on games it hasn't seen before (results are cached in `cache/`),
+  so once your games are analysed, rebuilds take well under a second. The first run on a
+  big archive takes a while: about 1–2 minutes a game at the default depth 16 on a
+  laptop (`--depth 12` is several times faster, if you want a quick first pass).
 
 ## How it measures
 

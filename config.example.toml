@@ -5,3 +5,11 @@ player = "your-username"
 
 # Optional: path to the Stockfish binary. If left out, `stockfish` on your PATH is used.
 # stockfish = "/opt/homebrew/bin/stockfish"
+
+# Optional: which games `build.py --fetch` keeps. Any of "rapid", "blitz", "bullet", "daily".
+# Leave out to keep every standard-chess game (variants like Chess960 are always skipped).
+# time_classes = ["rapid"]
+
+# Optional: Stockfish threads. Default: half your CPU cores (at a fixed depth this
+# changes quality a little more than speed).
+# threads = 4

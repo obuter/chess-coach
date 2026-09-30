@@ -5,6 +5,8 @@ Usage:
     .venv/bin/python build.py            # analyse new games, write data.js
     .venv/bin/python build.py --list     # print game keys (to name reviews/<key>.json)
     .venv/bin/python build.py --depth 18 # re-analyse everything at a new depth
+    .venv/bin/python build.py --fetch    # download new games from chess.com first
+    .venv/bin/python build.py --fetch --since 2025-01   # ...including older months
 
 Stockfish results are cached in cache/<key>.json, so only new games cost engine
 time. Reviews are read from reviews/<key>.json and checked against the PGN: a
@@ -16,6 +18,8 @@ import json
 import math
 import re
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,7 +27,7 @@ import chess
 import chess.engine
 import chess.pgn
 
-from analyze import BLUNDER, DEFAULT_PLAYER, ENGINE_PATH, MISTAKE, evaluate_game, phase_of, win_pct
+from analyze import BLUNDER, CONFIG, DEFAULT_PLAYER, MISTAKE, evaluate_game, open_engine, phase_of, win_pct
 
 ROOT = Path(__file__).resolve().parent
 GAMES, CACHE, REVIEWS = ROOT / "games", ROOT / "cache", ROOT / "reviews"
@@ -54,6 +58,70 @@ def load_games():
     return dict(sorted(games.items()))
 
 
+CHESSCOM_API = "https://api.chess.com/pub/player"
+USER_AGENT = "chess-coach (+https://github.com/obuter/chess-coach)"
+
+
+def http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.load(resp)
+
+
+def earliest_month_on_disk():
+    """'YYYY-MM' of the oldest game already in games/, or None."""
+    months = []
+    for path in GAMES.glob("*"):
+        if path.suffix in (".pgn", ".txt"):
+            months += [f"{y}-{m}" for y, m in re.findall(r'\[Date "(\d{4})\.(\d{2})', path.read_text())]
+    return min(months) if months else None
+
+
+def fetch_chesscom(player, since, time_classes):
+    """Download monthly archives into games/chesscom-YYYY-MM.pgn.
+
+    A month is fetched when its file is missing, or was last written before the month
+    ended (so the current month is re-fetched each run, and a finished month once more
+    after it ends). Only standard chess is kept; `time_classes` (e.g. ["rapid"])
+    narrows it further. Games that are already in another file are fine: the build
+    de-duplicates by game key. Network trouble is a warning, never a failed build.
+    """
+    try:
+        archives = http_json(f"{CHESSCOM_API}/{player.lower()}/games/archives")["archives"]
+    except urllib.error.HTTPError as e:
+        print(f"fetch: chess.com said {e.code} for player '{player}'" + (" — check `player` in config.toml" if e.code == 404 else ""))
+        return
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"fetch: couldn't reach chess.com ({e}); building from the games already on disk")
+        return
+    months = [(url, "-".join(url.rstrip("/").split("/")[-2:])) for url in archives]
+    if not months:
+        print(f"fetch: no games on chess.com for '{player}'")
+        return
+    since = since or earliest_month_on_disk() or months[-1][1]
+    GAMES.mkdir(exist_ok=True)
+    now = datetime.now(timezone.utc)
+    for url, ym in months:
+        if ym < since:
+            continue
+        path = GAMES / f"chesscom-{ym}.pgn"
+        year, month = map(int, ym.split("-"))
+        month_end = datetime(year + month // 12, month % 12 + 1, 1, tzinfo=timezone.utc)
+        if path.exists() and datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) >= month_end:
+            continue  # written after the month ended: complete
+        try:
+            data = http_json(url)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            print(f"fetch: {ym} failed ({e}); skipped")
+            continue
+        kept = [g["pgn"] for g in data.get("games", [])
+                if g.get("rules") == "chess" and g.get("pgn")
+                and (not time_classes or g.get("time_class") in time_classes)]
+        path.write_text("\n\n".join(p.strip() for p in kept) + "\n")
+        state = "in progress" if now < month_end else "complete"
+        print(f"fetch: {ym} — {len(kept)} of {len(data.get('games', []))} games kept ({state})")
+
+
 def cached_eval(key, game, depth, engine_box):
     path = CACHE / f"{key}.json"
     if path.exists():
@@ -61,10 +129,7 @@ def cached_eval(key, game, depth, engine_box):
         if data.get("depth") == depth:
             return data
     if engine_box[0] is None:
-        try:
-            engine_box[0] = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
-        except FileNotFoundError:
-            sys.exit(f"Stockfish not found at {ENGINE_PATH}. Install it (brew/apt install stockfish) or set `stockfish` in config.toml.")
+        engine_box[0] = open_engine()
     print(f"  analysing {key} at depth {depth} ...", flush=True)
     data = evaluate_game(game, engine_box[0], chess.engine.Limit(depth=depth))
     data["depth"] = depth
@@ -204,12 +269,19 @@ def main():
     ap.add_argument("--player", default=DEFAULT_PLAYER)
     ap.add_argument("--depth", type=int, default=16)
     ap.add_argument("--list", action="store_true", help="print game keys and exit")
+    ap.add_argument("--fetch", action="store_true", help="download your games from chess.com into games/ first")
+    ap.add_argument("--since", metavar="YYYY-MM", help="with --fetch: earliest month to download (default: your oldest game on disk)")
     args = ap.parse_args()
     PLAYER = args.player
     if not PLAYER:
         sys.exit("No player set. Copy config.example.toml to config.toml and set `player`, or pass --player.")
 
+    if args.fetch:
+        fetch_chesscom(PLAYER, args.since, CONFIG.get("time_classes"))
     games = load_games()
+    new = [k for k in games if not (CACHE / f"{k}.json").exists()]
+    if new and not args.list:
+        print(f"{len(new)} new game(s) for Stockfish — cached after this run.")
     if args.list:
         for key, (g, _) in games.items():
             h = g.headers

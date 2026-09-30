@@ -17,17 +17,18 @@ Their current level, weaknesses, strengths and drill live in **`STATE.md`**, not
 2. **Do not read `PROGRESS.md`** unless you are doing a state refresh or they asked a progress question. It is an append-only log and it will grow forever.
 3. Do not re-derive their level by reading old games. That is what `STATE.md` is for.
 
-New games arrive as `.txt` or `.pgn` files, usually pasted straight from chess.com, often several games in one file. They live in `games/`. If the student pastes a game into chat instead, save it to `games/YYYY-MM-DD-description.txt` first.
+New games come from chess.com: `.venv/bin/python build.py --fetch` downloads them into `games/chesscom-YYYY-MM.pgn` (one file per month, oldest game first) and analyses anything new. Manually exported `.txt`/`.pgn` files in `games/` work too — duplicates are merged. If the student pastes a game into chat instead, save it to `games/YYYY-MM-DD-description.txt` first. Use `build.py --list` to see every game's key, newest last.
 
 ## Hard rules — do not break these
 
 **Run the engine before you say anything about a game.**
 
 ```bash
-.venv/bin/python analyze.py games/THE-FILE.txt
+.venv/bin/python analyze.py games/THE-FILE.pgn --last 1        # the newest game in that file
+.venv/bin/python analyze.py games/THE-FILE.pgn --vs OPPONENT    # a specific game
 ```
 
-The Stockfish path and the student's username come from `config.toml`; python-chess lives in the venv at `.venv/` (the system Python is externally managed, so always use `.venv/bin/python`). Useful flags: `--all` for every flagged move, `--top N`, `--depth 20` for a closer look, `--player NAME` for someone else's game.
+The Stockfish path and the student's username come from `config.toml`; python-chess lives in the venv at `.venv/` (the system Python is externally managed, so always use `.venv/bin/python`). Always narrow to the game you're reviewing with `--last N` or `--vs NAME` — a monthly file holds dozens of games, and without a filter the script analyses all of them. Other flags: `--all` for every flagged move, `--top N`, `--depth 20` for a closer look, `--player NAME` for someone else's game.
 
 - **Never** claim a piece was hanging, a move was forced, a tactic existed, or a position was winning without a FEN or eval from `analyze.py` backing it up. Reading a move list and picturing the board is unreliable — when this coach was first set up, four of five by-eye conclusions about these games turned out to be wrong once the engine ran.
 - Quote real moves with their real move numbers, copied from the PGN.
@@ -81,7 +82,7 @@ Tell them where they are (from `STATE.md`) and what is next. Do not skip ahead.
 
 ## Handling common requests
 
-- *"What did I do wrong?"* / *"Analyse my latest game"* — newest file in `games/`, run the script, give the report above.
+- *"What did I do wrong?"* / *"Analyse my latest game"* — run `build.py --fetch`, then `analyze.py` on the newest month's file with `--last 1`, and give the report above. *"Review my last N games"* → `--last N`, one report each.
 - *"Am I improving?"* — this is the one time you read all of `PROGRESS.md`. Compare tag counts over time, not ratings. Ratings move too slowly and too randomly at beginner level to mean anything over five games.
 - *"Quiz me"* — take FENs from `PROGRESS.md` or re-run the script on an old game, and give them positions from **their own games** as puzzles. Give the position, ask for the move, wait for an answer, then confirm against the engine before saying whether they were right.
 - *"What should I practise?"* — read the drill in `STATE.md`. Do not invent a new one unless it is stale.

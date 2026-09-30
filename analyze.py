@@ -5,6 +5,8 @@ Usage:
     .venv/bin/python analyze.py games/FILE.txt              # top moments per game
     .venv/bin/python analyze.py games/FILE.txt --all        # every flagged move
     .venv/bin/python analyze.py games/FILE.txt --player NAME --depth 18
+    .venv/bin/python analyze.py games/chesscom-2026-09.pgn --last 1   # just the newest game
+    .venv/bin/python analyze.py games/chesscom-2026-09.pgn --vs alice # games against alice
 
 Severity is measured in WIN PROBABILITY lost, not centipawns. Going from +9 to +3
 is a big centipawn drop but changes nothing — you were winning, you are still
@@ -16,6 +18,7 @@ It gives no advice. The coach reads this and does the teaching.
 
 import argparse
 import math
+import os
 import shutil
 import sys
 import tomllib
@@ -38,6 +41,9 @@ def load_config():
 CONFIG = load_config()
 DEFAULT_PLAYER = CONFIG.get("player", "")
 ENGINE_PATH = CONFIG.get("stockfish") or shutil.which("stockfish") or "stockfish"
+# Stockfish threads; default half the cores. At a fixed depth, extra threads mostly search wider
+# rather than finish sooner, so don't expect a big speed-up.
+ENGINE_THREADS = int(CONFIG.get("threads") or max(1, (os.cpu_count() or 2) // 2))
 PIECE_VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
 
 # Win-probability points lost by a single move.
@@ -80,6 +86,16 @@ def fmt_eval(cp):
 def label_of(board, move):
     dots = "." if board.turn == chess.WHITE else "..."
     return f"{board.fullmove_number}{dots}{board.san(move)}"
+
+
+def open_engine():
+    """Start Stockfish with the configured thread count; exit with a readable message if it's missing."""
+    try:
+        engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
+    except FileNotFoundError:
+        sys.exit(f"Stockfish not found at {ENGINE_PATH}. Install it (brew/apt install stockfish) or set `stockfish` in config.toml.")
+    engine.configure({"Threads": ENGINE_THREADS})
+    return engine
 
 
 def evaluate_game(game, engine, limit):
@@ -206,26 +222,36 @@ def main():
     ap.add_argument("--depth", type=int, default=16)
     ap.add_argument("--all", action="store_true", help="show every flagged move")
     ap.add_argument("--top", type=int, default=5, help="moments to show per game")
+    ap.add_argument("--last", type=int, metavar="N", help="only the last N of the player's games in the file")
+    ap.add_argument("--vs", metavar="NAME", help="only games against this opponent")
     args = ap.parse_args()
     if not args.player:
         sys.exit("No player set. Copy config.example.toml to config.toml and set `player`, or pass --player.")
 
     limit = chess.engine.Limit(depth=args.depth)
-    try:
-        engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
-    except FileNotFoundError:
-        sys.exit(f"Stockfish not found at {ENGINE_PATH}. Install it (brew/apt install stockfish) or set `stockfish` in config.toml.")
+    engine = open_engine()
+
+    me = args.player.lower()
+    games = []
+    with open(args.pgn) as fh:
+        while (game := chess.pgn.read_game(fh)) is not None:
+            sides = (game.headers.get("White", "").lower(), game.headers.get("Black", "").lower())
+            if me in sides and (not args.vs or args.vs.lower() in sides):
+                games.append(game)
+    if args.last:
+        games = games[-args.last:]  # chess.com archives and exports are oldest-first
 
     total = 0
     try:
-        with open(args.pgn) as fh:
-            while (game := chess.pgn.read_game(fh)) is not None:
-                if analyse_game(game, engine, args.player, limit, args.all, args.top) is not None:
-                    total += 1
+        for game in games:
+            if analyse_game(game, engine, args.player, limit, args.all, args.top) is not None:
+                total += 1
     finally:
         engine.quit()
 
-    if total == 0:
+    if total == 0 and args.vs:
+        print(f"No games between '{args.player}' and '{args.vs}' in {args.pgn}.")
+    elif total == 0:
         print(f"No games found for player '{args.player}'. Check the --player name.")
     else:
         print(f"Analysed {total} game(s) for {args.player}.")
