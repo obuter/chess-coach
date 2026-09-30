@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess Review</title>
+<!--
+  Chess Review — a personal, offline game-review dashboard.
+  Data comes from data.js, written by `.venv/bin/python build.py` (Stockfish evals + Claude's reviews).
+  No libraries, no network: open this file straight from Finder.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --accent-wash: rgba(42, 120, 214, 0.10);
+  --good-text: #006300;
+  --bad-text: #b52f2f;
+  --best: #0ca30c;
+  --inaccuracy: #fab219;
+  --mistake: #ec835a;
+  --blunder: #d03b3b;
+  --claude: #c2410c;
+  --claude-wash: rgba(194, 65, 12, 0.07);
+  --sq-light: #ebe6d9;
+  --sq-dark: #a58a6a;
+  --sq-hi: rgba(250, 178, 25, 0.45);
+  --seq-0: #cde2fb; --seq-1: #86b6ef; --seq-2: #3987e5; --seq-3: #1c5cab; --seq-4: #0d366b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.14);
+    --good-text: #0ca30c; --bad-text: #e66767;
+    --claude: #f0915a; --claude-wash: rgba(240, 145, 90, 0.09);
+    --sq-light: #b9ad97; --sq-dark: #7a6249;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.14);
+  --good-text: #0ca30c; --bad-text: #e66767;
+  --claude: #f0915a; --claude-wash: rgba(240, 145, 90, 0.09);
+  --sq-light: #b9ad97; --sq-dark: #7a6249;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+button { font: inherit; color: inherit; }
+code { font: 0.92em ui-monospace, "SF Mono", Menlo, monospace; background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+
+header.top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
+  position: sticky; top: 0; z-index: 5;
+}
+header.top h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+header.top h1 span { color: var(--muted); font-weight: 450; }
+nav { display: flex; gap: 4px; }
+nav a {
+  text-decoration: none; color: var(--ink-2); padding: 5px 12px; border-radius: 8px; font-weight: 500;
+}
+nav a:hover { background: var(--surface-2); }
+nav a.on { background: var(--surface-2); color: var(--ink); }
+.spacer { flex: 1; }
+.theme-btn {
+  border: 1px solid var(--border); background: transparent; border-radius: 8px; padding: 4px 10px;
+  color: var(--ink-2); cursor: pointer;
+}
+main { max-width: 1240px; margin: 0 auto; padding: 24px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+.card h2 { font-size: 15px; margin: 0 0 2px; font-weight: 650; }
+.card .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.stack { display: grid; gap: 16px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin-top: 2px; }
+.tile .delta { font-size: 13px; color: var(--muted); }
+.delta.good { color: var(--good-text); }
+.delta.bad { color: var(--bad-text); }
+
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { font: 11px system-ui, -apple-system, sans-serif; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 50; display: none;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 10px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 280px;
+}
+.tip b { font-weight: 600; }
+.tip .m { color: var(--muted); }
+
+table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.list th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12.5px; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+table.list td { padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+table.list tr.row { cursor: pointer; }
+table.list tr.row:hover td { background: var(--surface-2); }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+.snip { color: var(--ink-2); font-size: 13px; max-width: 460px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.badge.win { color: var(--good-text); }
+.badge.loss { color: var(--bad-text); }
+.badge.draw { color: var(--ink-2); }
+.side { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--axis); vertical-align: -1px; margin-right: 6px; }
+.side.white { background: #fff; }
+.side.black { background: #222; }
+
+.heat { border-collapse: separate; border-spacing: 2px; font-size: 13px; width: 100%; }
+.heat th { font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 6px; text-align: center; }
+.heat th.tag { text-align: left; color: var(--ink-2); font-size: 13px; }
+.heat td { text-align: center; border-radius: 4px; padding: 6px 4px; font-variant-numeric: tabular-nums; min-width: 54px; }
+
+.md h3 { font-size: 15px; margin: 0 0 6px; }
+.md h4 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 4px; font-weight: 600; }
+.md p, .md li { color: var(--ink-2); margin: 4px 0; }
+.md ol, .md ul { padding-left: 20px; margin: 4px 0; }
+.md strong { color: var(--ink); }
+
+.milestones { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+.milestones li { padding: 6px 0; border-bottom: 1px solid var(--grid); color: var(--ink-2); }
+.milestones li b { color: var(--ink); font-weight: 600; }
+
+/* game view */
+.game-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 14px; }
+.game-head h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.game-head .meta { color: var(--muted); font-size: 13.5px; }
+.game { display: grid; grid-template-columns: minmax(300px, 500px) 1fr; gap: 20px; align-items: start; }
+.board-wrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 6px; overflow: hidden; user-select: none; }
+.board { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); width: 100%; height: 100%; container-type: inline-size; }
+.sq { position: relative; display: flex; align-items: center; justify-content: center; }
+.sq.l { background: var(--sq-light); }
+.sq.d { background: var(--sq-dark); }
+.sq.hi::before { content: ""; position: absolute; inset: 0; background: var(--sq-hi); }
+.sq .pc { position: relative; font-size: 10.2cqw; line-height: 1; font-family: "Apple Symbols", "Segoe UI Symbol", "DejaVu Sans", serif; }
+.pc.w { color: #fff; -webkit-text-stroke: 1.3px #1b1b1b; paint-order: stroke fill; }
+.pc.b { color: #141414; }
+.sq .co { position: absolute; font-size: 2.2cqw; font-weight: 600; opacity: .75; }
+.sq .co.f { right: 3px; bottom: 1px; }
+.sq .co.r { left: 3px; top: 1px; }
+.sq.l .co { color: var(--sq-dark); }
+.sq.d .co { color: var(--sq-light); }
+.arrows { position: absolute; inset: 0; pointer-events: none; }
+.controls { display: flex; gap: 6px; margin-top: 10px; }
+.controls button {
+  flex: 1; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 7px 0; cursor: pointer; font-size: 15px;
+}
+.controls button:hover { background: var(--surface-2); }
+.keys { color: var(--muted); font-size: 12px; margin-top: 6px; text-align: center; }
+
+.cls { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.cls i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.i-best { background: var(--best); } .i-good { background: var(--axis); } .i-inaccuracy { background: var(--inaccuracy); }
+.i-mistake { background: var(--mistake); } .i-blunder { background: var(--blunder); }
+
+.now h3 { margin: 0 0 4px; font-size: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.now dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 10px 0 0; font-size: 14px; }
+.now dt { color: var(--muted); }
+.now dd { margin: 0; color: var(--ink); }
+.claude {
+  border-left: 3px solid var(--claude); background: var(--claude-wash); border-radius: 0 8px 8px 0;
+  padding: 10px 12px; margin-top: 12px; font-size: 14px;
+}
+.claude .who { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--claude); margin-bottom: 3px; }
+.claude p { margin: 3px 0; }
+.claude .rule { font-weight: 600; }
+
+.moves { display: grid; grid-template-columns: 36px 1fr 1fr; gap: 1px 4px; font-size: 14px; max-height: 300px; overflow-y: auto; font-variant-numeric: tabular-nums; }
+.moves .no { color: var(--muted); text-align: right; padding: 3px 4px 3px 0; }
+.moves button {
+  text-align: left; border: 0; background: transparent; padding: 3px 6px; border-radius: 5px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+}
+.moves button:hover { background: var(--surface-2); }
+.moves button.cur { background: var(--accent-wash); font-weight: 600; }
+.moves button.opp { color: var(--ink-2); }
+.moves .sym { font-weight: 700; font-size: 12px; }
+.moves .pin { width: 6px; height: 6px; border-radius: 50%; background: var(--claude); margin-left: auto; }
+.report h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 3px; font-weight: 600; }
+.report p { margin: 3px 0; color: var(--ink-2); font-size: 14px; }
+.report .moment { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; cursor: pointer; font-size: 14px; }
+.report .moment:hover { background: var(--surface-2); }
+.report .moment .mv { font-weight: 650; }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.tags span { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--ink-2); }
+.empty { color: var(--muted); font-size: 14px; }
+
+/* repertoire */
+.rep { max-width: 780px; margin: 0 auto; }
+.rep h3 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 8px; }
+.rep h4 { font-size: 16px; margin: 26px 0 6px; color: var(--ink); }
+.rep p, .rep li { color: var(--ink-2); margin: 6px 0; }
+.rep ul { padding-left: 20px; }
+.rep strong { color: var(--ink); }
+.rep a.game-link { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-wash); }
+.rep a.game-link:hover { border-bottom-color: var(--accent); }
+.setup { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; }
+.setup .board-wrap { width: 232px; flex: none; }
+.setup ol { margin: 0; padding: 0; list-style: none; counter-reset: mv; display: grid; gap: 4px; }
+.setup ol li { counter-increment: mv; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.setup ol li::before { content: counter(mv) ". "; color: var(--muted); font-weight: 450; }
+.setup .cap { color: var(--muted); font-size: 12.5px; margin-top: 8px; max-width: 200px; }
+
+@media (max-width: 900px) {
+  .grid2, .game { grid-template-columns: 1fr; }
+  main { padding: 16px; }
+  header.top { padding: 12px 16px; }
+  .hide-sm { display: none; }
+}
+</style>
+<script src="data.js"></script>
+</head>
+<body>
+<header class="top">
+  <h1>Chess Review <span id="who"></span></h1>
+  <nav><a href="#/" id="nav-overview">Overview</a><a href="#/games" id="nav-games">Games</a><a href="#/repertoire" id="nav-repertoire">Repertoire</a></nav>
+  <div class="spacer"></div>
+  <button class="theme-btn" id="theme" title="Theme">Auto</button>
+</header>
+<main id="app"></main>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const D = window.CHESS;
+const app = document.getElementById("app");
+const tip = document.getElementById("tip");
+const CLS = {
+  best: { sym: "★", label: "Best" }, good: { sym: "", label: "Good" },
+  inaccuracy: { sym: "?!", label: "Inaccuracy" }, mistake: { sym: "?", label: "Mistake" },
+  blunder: { sym: "??", label: "Blunder" },
+};
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ---------- helpers ----------
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const mdInline = (s) => esc(s)
+  .replace(/`([^`]+)`/g, "<code>$1</code>")
+  .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+function mdBlock(src) {
+  const out = []; let para = [], list = null;
+  const flush = () => { if (para.length) { out.push("<p>" + mdInline(para.join(" ")) + "</p>"); para = []; } };
+  const endList = () => { if (list) { out.push(`<${list.tag}>` + list.items.map((i) => "<li>" + mdInline(i) + "</li>").join("") + `</${list.tag}>`); list = null; } };
+  for (const raw of src.split("\n")) {
+    const line = raw.trimEnd(); let m;
+    if (!line.trim()) { flush(); endList(); continue; }
+    if ((m = line.match(/^(#{1,3})\s+(.*)/))) { flush(); endList(); const h = m[1].length + 2; out.push(`<h${h}>${mdInline(m[2])}</h${h}>`); continue; }
+    if ((m = line.match(/^\s*\d+\.\s+(.*)/)) || (m = line.match(/^\s*[-*]\s+(.*)/))) {
+      flush(); const tag = /^\s*\d/.test(line) ? "ol" : "ul";
+      if (!list || list.tag !== tag) { endList(); list = { tag, items: [] }; }
+      list.items.push(m[1]); continue;
+    }
+    if (list && /^\s+/.test(raw)) { list.items[list.items.length - 1] += " " + line.trim(); continue; }
+    endList(); para.push(line.trim());
+  }
+  flush(); endList(); return out.join("");
+}
+function fmtEval(cp) {
+  if (cp == null) return "?";
+  if (Math.abs(cp) >= 9000) { const n = 10000 - Math.abs(cp); return n === 0 ? "#" : (cp > 0 ? "M" : "−M") + n; }
+  const v = cp / 100; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1);
+}
+const fmtClock = (s) => s == null ? "" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const mean = (xs) => { const v = xs.filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+const rolling = (xs, k) => xs.map((_, i) => mean(xs.slice(Math.max(0, i - k + 1), i + 1)));
+const moveLabel = (p) => `${p.move_no}${p.ply % 2 ? "." : "…"}${p.san}`;
+const myPly = (g, p) => (p.ply % 2 === 1) === (g.colour === "white");
+const povCp = (g, cp) => g.colour === "white" ? cp : -cp;
+const shortDate = (g) => `${g.date.slice(5)} ${g.end.slice(0, 2)}:${g.end.slice(2)}`;
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// ---------- one small SVG chart for everything ----------
+// x is a band index 0..n-1; layers draw on top of each other.
+function chart(host, o) {
+  const draw = () => {
+    const W = Math.max(260, host.clientWidth), H = o.h || 180;
+    const P = { l: o.padL ?? 38, r: 10, t: 10, b: o.noX ? 6 : 22 };
+    const band = (W - P.l - P.r) / o.n;
+    const X = (i) => P.l + (i + 0.5) * band;
+    const Y = (v) => P.t + (1 - (v - o.y.min) / (o.y.max - o.y.min)) * (H - P.t - P.b);
+    let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(o.label || "")}">`;
+    for (const t of o.y.ticks || []) {
+      s += `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="${css(t === o.base ? "--axis" : "--grid")}" stroke-width="1"/>`;
+      s += `<text x="${P.l - 6}" y="${Y(t) + 3.5}" text-anchor="end">${esc(o.y.fmt ? o.y.fmt(t) : t)}</text>`;
+    }
+    (o.vlines || []).forEach((m, k) => {
+      const x = P.l + (m.i + 1) * band, ly = P.t + 9 + (k % 2) * 12;
+      s += `<line x1="${x}" x2="${x}" y1="${P.t}" y2="${H - P.b}" stroke="${css("--claude")}" stroke-width="1" opacity=".7"/>`;
+      if (m.label) s += `<text x="${x + 4}" y="${ly}" text-anchor="${m.i > o.n * 0.85 ? "end" : "start"}" dx="${m.i > o.n * 0.85 ? -8 : 0}" style="fill:${css("--claude")}">${esc(m.label)}</text>`;
+    });
+    if (!o.noX) for (const t of o.xTicks || []) s += `<text x="${X(t.i)}" y="${H - 6}" text-anchor="middle">${esc(t.label)}</text>`;
+    for (const L of o.layers) {
+      const pts = L.values.map((v, i) => v == null ? null : [X(i), Y(v)]);
+      if (L.type === "area" || L.type === "line") {
+        const segs = []; let cur = [];
+        pts.forEach((p) => { if (p) cur.push(p); else if (cur.length) { segs.push(cur); cur = []; } });
+        if (cur.length) segs.push(cur);
+        for (const seg of segs) {
+          const d = seg.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
+          if (L.type === "area") {
+            const b = Y(L.from ?? o.y.min);
+            s += `<path d="${d}L${seg[seg.length - 1][0].toFixed(1)} ${b}L${seg[0][0].toFixed(1)} ${b}Z" fill="${L.color}" opacity=".12"/>`;
+          }
+          s += `<path d="${d}" fill="none" stroke="${L.color}" stroke-width="${L.width || 2}" stroke-linejoin="round" stroke-linecap="round" opacity="${L.opacity ?? 1}"/>`;
+        }
+      } else if (L.type === "dots") {
+        pts.forEach((p, i) => {
+          if (!p) return;
+          const c = typeof L.color === "function" ? L.color(i) : L.color;
+          if (!c) return;
+          s += `<circle cx="${p[0]}" cy="${p[1]}" r="${L.r || 4}" fill="${c}" stroke="${css("--surface")}" stroke-width="2"/>`;
+        });
+      } else if (L.type === "stack") {
+        const w = Math.min(24, band * 0.72);
+        L.values.forEach((row, i) => {
+          if (!row) return;
+          let acc = 0; const parts = row.map((v, k) => ({ v, k })).filter((p) => p.v > 0);
+          parts.forEach((p, j) => {
+            const y0 = Y(acc), y1 = Y(acc + p.v); acc += p.v;
+            const top = j === parts.length - 1, h = Math.max(0, y0 - y1 - (j ? 2 : 0));
+            const x = X(i) - w / 2, y = y1, r = top ? Math.min(4, w / 2, h) : 0;
+            s += `<path d="M${x} ${y + h}V${y + r}Q${x} ${y} ${x + r} ${y}H${x + w - r}Q${x + w} ${y} ${x + w} ${y + r}V${y + h}Z" fill="${L.colors[p.k]}"/>`;
+          });
+        });
+      } else if (L.type === "pins") {
+        L.values.forEach((v, i) => { if (v) s += `<path d="M${X(i)} ${P.t + 8}l-4.5 -7h9z" fill="${css("--claude")}"/>`; });
+      }
+    }
+    if (o.current != null) s += `<line x1="${X(o.current)}" x2="${X(o.current)}" y1="${P.t}" y2="${H - P.b}" stroke="${css("--ink-2")}" stroke-width="1"/>`;
+    s += `<line class="xh" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" stroke="${css("--muted")}" stroke-width="1" visibility="hidden"/>`;
+    s += `<rect x="${P.l}" y="0" width="${W - P.l - P.r}" height="${H}" fill="transparent" style="cursor:${o.click ? "pointer" : "crosshair"}"/></svg>`;
+    host.innerHTML = s;
+    const svg = host.querySelector("svg"), xh = svg.querySelector(".xh"), hit = svg.querySelector("rect:last-of-type");
+    const idx = (ev) => { const r = svg.getBoundingClientRect(); return Math.max(0, Math.min(o.n - 1, Math.floor((ev.clientX - r.left - P.l) / band))); };
+    hit.addEventListener("pointermove", (ev) => {
+      const i = idx(ev); xh.setAttribute("x1", X(i)); xh.setAttribute("x2", X(i)); xh.setAttribute("visibility", "visible");
+      const h = o.tip && o.tip(i); if (h) showTip(h, ev); else hideTip();
+    });
+    hit.addEventListener("pointerleave", () => { xh.setAttribute("visibility", "hidden"); hideTip(); });
+    if (o.click) hit.addEventListener("click", (ev) => o.click(idx(ev)));
+  };
+  draw();
+  host._chartDraw = draw;
+}
+// Charts from a view we've navigated away from are detached: stop watching them instead of redrawing.
+const ro = new ResizeObserver((entries) => {
+  for (const e of entries) {
+    if (!e.target.isConnected) ro.unobserve(e.target);
+    else if (e.target._chartDraw) e.target._chartDraw();
+  }
+});
+function mountChart(host, o) { chart(host, o); ro.observe(host); }
+
+// ---------- data prep ----------
+if (!D) {
+  app.innerHTML = `<div class="card"><h2>No data yet</h2><p class="sub">Run <code>.venv/bin/python build.py</code> in this folder, then reload.</p></div>`;
+  throw new Error("data.js missing");
+}
+const games = D.games;
+const byKey = Object.fromEntries(games.map((g) => [g.key, g]));
+document.getElementById("who").textContent = "· " + D.player;
+const blunders = (g) => g.counts.blunder;
+// Games shorter than 10 plies (e.g. 1.e4 then an agreed draw) are left out of averages and the heatmap.
+const real = games.filter((g) => g.plies.length >= 10);
+const annotations = (g) => g.review ? g.review.moments.length + Object.keys(g.review.notes).length : 0;
+
+// ---------- overview ----------
+function tile(label, value, delta, goodWhenUp) {
+  let d = "";
+  if (delta != null && delta.v != null && isFinite(delta.v)) {
+    const up = delta.v > 0, zero = Math.abs(delta.v) < 1e-9;
+    const cls = zero ? "" : (up === goodWhenUp ? "good" : "bad");
+    d = `<div class="delta ${cls}">${zero ? "±0" : (up ? "▲ " : "▼ ") + delta.fmt(Math.abs(delta.v))} ${esc(delta.vs)}</div>`;
+  } else if (delta && delta.text) d = `<div class="delta">${esc(delta.text)}</div>`;
+  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${value}</div>${d}</div>`;
+}
+
+function renderOverview() {
+  if (!games.length) {
+    app.innerHTML = `<div class="card"><h2>No games yet</h2><p class="sub">Put a PGN export in <code>games/</code>, set <code>player</code> in <code>config.toml</code>, and run <code>.venv/bin/python build.py</code>. Then ask Claude Code to review a game.</p></div>`;
+    return;
+  }
+  const n = games.length;
+  const w = games.filter((g) => g.outcome === "win").length, l = games.filter((g) => g.outcome === "loss").length, dr = n - w - l;
+  const first5 = real.slice(0, 5), last5 = real.slice(-5);
+  const accF = mean(first5.map((g) => g.accuracy)), accL = mean(last5.map((g) => g.accuracy));
+  const blF = mean(first5.map(blunders)), blL = mean(last5.map(blunders));
+  const elos = games.map((g) => g.my_elo);
+  const eloFirst = elos.find((e) => e != null), eloLast = [...elos].reverse().find((e) => e != null);
+  const rated = elos.filter((e) => e != null);
+  const notes = games.reduce((a, g) => a + annotations(g), 0), reviewed = games.filter((g) => g.review).length;
+  const xTicks = games.map((g, i) => ({ i, label: String(i + 1) })).filter((t, i) => n <= 20 || i % 5 === 0);
+  const vlines = (D.milestones || []).map((m) => ({ i: games.findIndex((g) => g.key === m.after), label: m.short || "" })).filter((m) => m.i >= 0);
+  const gameTip = (i, extra) => { const g = games[i]; return `<b>${i + 1}. vs ${esc(g.opponent)}</b> <span class="m">${esc(shortDate(g))}</span><br>${extra}`; };
+
+  app.innerHTML = `
+    <div class="tiles">
+      ${tile("Games analysed", n, { text: `${reviewed} with Claude's review` })}
+      ${tile("Record", `${w}–${dr}–${l}`, { text: "wins – draws – losses" })}
+      ${tile("Rating", eloLast ?? "–", { text: rated.length ? `range ${Math.min(...rated)}–${Math.max(...rated)} · started at ${eloFirst}` : "no ratings in the PGN headers" })}
+      ${tile("Accuracy, last 5", accL == null ? "–" : accL.toFixed(0) + "%", { v: accL - accF, fmt: (x) => x.toFixed(1) + " pts", vs: "vs first 5" }, true)}
+      ${tile("Blunders per game, last 5", blL == null ? "–" : blL.toFixed(1), { v: blL - blF, fmt: (x) => x.toFixed(1), vs: "vs first 5" }, false)}
+      ${tile("Moves Claude annotated", notes, { text: `across ${reviewed} games` })}
+    </div>
+    <div class="grid2">
+      <div class="stack">
+        <div class="card"><h2>Rating</h2><p class="sub">chess.com rating at the start of each game. Orange lines mark coaching changes.</p><div class="chart" id="c-elo"></div></div>
+        <div class="card"><h2>Accuracy</h2><p class="sub">Per game (dots) and the 5-game average (line). Lichess formula, from win% lost per move.</p><div class="chart" id="c-acc"></div></div>
+        <div class="card"><h2>Mistakes and blunders per game</h2><p class="sub">A blunder costs 20%+ of your winning chances in one move; a mistake 10–20%.</p><div class="chart" id="c-err"></div>
+          <div class="legend"><span><i style="background:var(--blunder)"></i>Blunder</span><span><i style="background:var(--mistake)"></i>Mistake</span></div></div>
+      </div>
+      <div class="stack">
+        <div class="card"><h2>Is the coaching working?</h2><p class="sub">How often each weakness tag showed up, per block of 5 games. Tags come from Claude's reviews. Lighter means it happened less. Games under 5 moves are left out.</p><div id="heat"></div></div>
+        <div class="card md">${mdBlock(D.state_md || "_No STATE.md_")}</div>
+        ${(D.milestones || []).length ? `<div class="card"><h2>Coaching timeline</h2><p class="sub">Changes that came out of the reviews.</p><ul class="milestones">${D.milestones.map((m) => `<li><b>${esc(m.date)}</b> — ${mdInline(m.label)}</li>`).join("")}</ul></div>` : ""}
+      </div>
+    </div>`;
+
+  const eMin = Math.floor((Math.min(...rated) - 20) / 50) * 50;
+  const eMax = Math.ceil((Math.max(...rated) + 20) / 50) * 50;
+  const eTicks = []; for (let t = eMin; t <= eMax; t += 50) eTicks.push(t);
+  if (!rated.length) document.getElementById("c-elo").innerHTML = `<p class="empty">No ratings in the PGN headers.</p>`;
+  else mountChart(document.getElementById("c-elo"), {
+    n, h: 170, y: { min: eMin, max: eMax, ticks: eTicks }, xTicks, vlines, label: "Rating per game",
+    layers: [{ type: "line", values: elos, color: css("--accent") }, { type: "dots", values: elos, color: css("--accent"), r: 3.5 }],
+    tip: (i) => gameTip(i, `Rating ${games[i].my_elo ?? "?"} · ${games[i].outcome}`), click: (i) => go(games[i].key),
+  });
+  const acc = games.map((g) => g.accuracy);
+  mountChart(document.getElementById("c-acc"), {
+    n, h: 170, y: { min: 0, max: 100, ticks: [0, 25, 50, 75, 100], fmt: (t) => t + "%" }, xTicks, vlines, label: "Accuracy per game",
+    layers: [{ type: "dots", values: acc, color: css("--accent"), r: 3.5 }, { type: "line", values: rolling(acc, 5), color: css("--accent") }],
+    tip: (i) => gameTip(i, `Accuracy ${acc[i]?.toFixed(1)}% · 5-game avg ${rolling(acc, 5)[i]?.toFixed(1)}%<br><span class="m">Opponent ${games[i].opp_accuracy?.toFixed(1)}%</span>`),
+    click: (i) => go(games[i].key),
+  });
+  const errMax = Math.max(4, ...games.map((g) => g.counts.blunder + g.counts.mistake));
+  const errTicks = []; for (let t = 0; t <= errMax; t += errMax > 8 ? 2 : 1) errTicks.push(t);
+  mountChart(document.getElementById("c-err"), {
+    n, h: 170, y: { min: 0, max: errTicks[errTicks.length - 1], ticks: errTicks }, base: 0, xTicks, vlines, label: "Mistakes and blunders per game",
+    layers: [{ type: "stack", values: games.map((g) => [g.counts.blunder, g.counts.mistake]), colors: [css("--blunder"), css("--mistake")] }],
+    tip: (i) => gameTip(i, `${games[i].counts.blunder} blunders · ${games[i].counts.mistake} mistakes · ${games[i].counts.inaccuracy} inaccuracies`),
+    click: (i) => go(games[i].key),
+  });
+  renderHeat(document.getElementById("heat"));
+}
+
+function renderHeat(host) {
+  const rev = real.filter((g) => g.review);
+  if (!rev.length) { host.innerHTML = `<p class="empty">No reviews yet — Claude writes them to <code>reviews/</code> at session close.</p>`; return; }
+  const blocks = [];
+  for (let i = 0; i < rev.length; i += 5) blocks.push(rev.slice(i, i + 5));
+  const skip = new Set(["clean-game", "tactic-found", "opening-fine"]);
+  const totals = {};
+  rev.forEach((g) => g.review.tags.forEach((t) => { if (!skip.has(t)) totals[t] = (totals[t] || 0) + 1; }));
+  const tags = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+  const ramp = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map(css);
+  const cell = (hits, of) => {
+    if (!hits) return `<td style="color:var(--muted)">·</td>`;
+    const r = hits / of, k = Math.min(4, Math.ceil(r * 5) - 1);
+    return `<td style="background:${ramp[k]};color:${k >= 2 ? "#fff" : "#0b0b0b"}" title="${hits} of ${of} games">${hits}/${of}</td>`;
+  };
+  const good = rev.map((g) => g.review.tags.includes("clean-game") ? 1 : 0);
+  host.innerHTML = `<table class="heat"><tr><th></th>${blocks.map((b, i) => `<th>Games ${i * 5 + 1}–${i * 5 + b.length}</th>`).join("")}</tr>
+    ${tags.map((t) => `<tr><th class="tag">${esc(t)}</th>${blocks.map((b) => cell(b.filter((g) => g.review.tags.includes(t)).length, b.length)).join("")}</tr>`).join("")}
+    <tr><th class="tag" style="color:var(--good-text)">clean-game ✓</th>${blocks.map((b, i) => { const c = good.slice(i * 5, i * 5 + b.length).reduce((a, x) => a + x, 0); return `<td>${c ? c + "/" + b.length : "·"}</td>`; }).join("")}</tr></table>`;
+}
+
+// ---------- games list ----------
+function renderGames() {
+  const rows = [...games].reverse().map((g) => {
+    const snap = g.review && g.review.snapshot ? g.review.snapshot.split(/(?<=\.)\s/)[0] : "";
+    return `<tr class="row" data-key="${esc(g.key)}">
+      <td>${esc(shortDate(g))}</td>
+      <td><span class="side ${g.colour}"></span>${esc(g.opponent)} <span style="color:var(--muted)">${g.opp_elo ?? ""}</span></td>
+      <td><span class="badge ${g.outcome}">${g.outcome === "win" ? "Won" : g.outcome === "loss" ? "Lost" : "Draw"}</span></td>
+      <td class="num">${g.accuracy?.toFixed(0) ?? "–"}%</td>
+      <td class="num">${g.counts.blunder}/${g.counts.mistake}</td>
+      <td class="snip hide-sm">${mdInline(snap)}</td></tr>`;
+  }).join("");
+  app.innerHTML = `<div class="card"><h2>Games</h2><p class="sub">${games.length} games, newest first. Click a row for the move-by-move review.</p>
+    <table class="list"><thead><tr><th>Date</th><th>Opponent</th><th>Result</th><th class="num">Accuracy</th><th class="num" title="blunders / mistakes">B/M</th><th class="hide-sm">Claude's snapshot</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  app.querySelectorAll("tr.row").forEach((tr) => tr.addEventListener("click", () => go(tr.dataset.key)));
+}
+
+// ---------- repertoire ----------
+function renderRepertoire() {
+  if (!D.repertoire_md) { app.innerHTML = `<div class="card"><h2>No repertoire</h2><p class="sub">Add REPERTOIRE.md and run build.py.</p></div>`; return; }
+  app.innerHTML = `<div class="card rep" id="rep">${mdBlock(D.repertoire_md)}</div>`;
+  const rep = document.getElementById("rep");
+  // Each **a · b · c** setup line becomes a diagram of the position after your six moves.
+  rep.querySelectorAll("p").forEach((p) => {
+    const b = D.repertoire_boards && D.repertoire_boards[p.textContent.trim()];
+    if (!b || p.children.length !== 1 || p.firstElementChild.tagName !== "STRONG") return;
+    const fig = document.createElement("div");
+    fig.className = "setup";
+    fig.innerHTML = `<div class="board-wrap"><div class="board">${boardHTML(b.fen, b.colour === "black", b.squares)}</div></div>
+      <div><ol>${p.textContent.split("·").map((m) => `<li>${esc(m.trim())}</li>`).join("")}</ol>
+      <div class="cap">Highlighted: where your six moves land. Their pieces are shown at home.</div></div>`;
+    p.replaceWith(fig);
+  });
+  linkGames(rep);
+}
+// Turn opponent names into links to that game. When a move of yours (right colour) follows
+// the name, e.g. "vs alice ... `2.Bxb5`", the link opens the game at that move.
+function linkGames(root) {
+  const byOpp = {};
+  games.forEach((g) => { byOpp[g.opponent] = g; });
+  const names = Object.keys(byOpp).sort((a, b) => b.length - a.length);
+  if (!names.length) return;
+  const re = new RegExp("(" + names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")");
+  root.querySelectorAll("p, li").forEach((block) => {
+    const full = block.textContent;
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (let node of nodes) {
+      if (node.parentElement.closest("a, code")) continue;
+      let m;
+      while (node && (m = node.nodeValue.match(re))) {
+        const g = byOpp[m[1]];
+        const after = full.slice(full.indexOf(m[1]) + m[1].length).slice(0, 160);
+        let ply = 0;
+        for (const t of after.matchAll(/(\d+)(\.\.\.|\.)\s*[A-Za-z]/g)) {
+          const white = t[2] === ".";
+          if (white === (g.colour === "white")) { ply = 2 * +t[1] - (white ? 1 : 0); break; }
+        }
+        if (ply > g.plies.length) ply = 0;
+        const rest = node.splitText(m.index);
+        node = rest.splitText(m[1].length);
+        const a = document.createElement("a");
+        a.className = "game-link"; a.href = `#/game/${encodeURIComponent(g.key)}/${ply}`;
+        a.title = ply ? "Open this game at that move" : "Open this game";
+        a.textContent = m[1];
+        rest.replaceWith(a);
+      }
+    }
+  });
+}
+
+// ---------- game view ----------
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+function boardHTML(fen, flip, hi) {
+  const rows = fen.split(" ")[0].split("/");
+  const grid = rows.map((r) => r.replace(/\d/g, (d) => ".".repeat(+d)).split(""));
+  let s = "";
+  for (let vr = 0; vr < 8; vr++) for (let vf = 0; vf < 8; vf++) {
+    const r = flip ? 7 - vr : vr, f = flip ? 7 - vf : vf;
+    const sq = "abcdefgh"[f] + (8 - r), pc = grid[r][f];
+    s += `<div class="sq ${(r + f) % 2 ? "d" : "l"}${hi.includes(sq) ? " hi" : ""}">`;
+    if (vf === 0) s += `<span class="co r">${8 - r}</span>`;
+    if (vr === 7) s += `<span class="co f">${"abcdefgh"[f]}</span>`;
+    if (pc !== ".") s += `<span class="pc ${pc === pc.toUpperCase() ? "w" : "b"}">${GLYPH[pc.toLowerCase()]}︎</span>`;
+    s += `</div>`;
+  }
+  return s;
+}
+function arrowsSVG(arrows, flip) {
+  const c = (sq) => { const f = sq.charCodeAt(0) - 97, r = +sq[1] - 1; return flip ? [7 - f + 0.5, r + 0.5] : [f + 0.5, 7 - r + 0.5]; };
+  let s = `<svg class="arrows" viewBox="0 0 8 8"><defs>`;
+  arrows.forEach((a, i) => { s += `<marker id="ah${i}" markerWidth="3" markerHeight="3" refX="1.6" refY="1.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L3 1.5L0 3z" fill="${a.color}"/></marker>`; });
+  s += `</defs>`;
+  arrows.forEach((a, i) => {
+    const [x1, y1] = c(a.uci.slice(0, 2)), [x2, y2] = c(a.uci.slice(2, 4));
+    const len = Math.hypot(x2 - x1, y2 - y1), k = (len - 0.35) / len;
+    s += `<line x1="${x1}" y1="${y1}" x2="${x1 + (x2 - x1) * k}" y2="${y1 + (y2 - y1) * k}" stroke="${a.color}" stroke-width=".17" stroke-linecap="round" opacity=".85" marker-end="url(#ah${i})"/>`;
+  });
+  return s + `</svg>`;
+}
+
+let G = null, cur = 0, flip = false;
+function renderGame(key, ply) {
+  G = byKey[key];
+  if (!G) { app.innerHTML = `<div class="card"><h2>Game not found</h2><p class="sub">${esc(key)}</p></div>`; return; }
+  cur = Math.max(0, Math.min(G.plies.length, ply ?? 0));
+  flip = G.colour === "black";
+  const rv = G.review;
+  const res = G.outcome === "win" ? "Won" : G.outcome === "loss" ? "Lost" : "Draw";
+  app.innerHTML = `
+    <div class="game-head">
+      <h2><span class="side ${G.colour}"></span>vs ${esc(G.opponent)} <span style="color:var(--muted);font-weight:450">${G.opp_elo ?? ""}</span></h2>
+      <span class="badge ${G.outcome}">${res}</span>
+      <span class="meta">${[G.date, G.termination, G.time_control && G.time_control + "s", G.opening].filter(Boolean).map(esc).join(" · ")}
+        · accuracy you ${G.accuracy?.toFixed(0) ?? "–"}% / them ${G.opp_accuracy?.toFixed(0) ?? "–"}%${G.link ? ` · <a href="${esc(G.link)}" target="_blank" rel="noopener">chess.com</a>` : ""}</span>
+    </div>
+    <div class="game">
+      <div>
+        <div class="board-wrap"><div class="board" id="board"></div><div id="arrows"></div></div>
+        <div class="controls">
+          <button data-go="start" title="Start (Home)">⏮</button><button data-go="prev" title="Back (←)">◀</button>
+          <button data-go="next" title="Forward (→)">▶</button><button data-go="end" title="End (End)">⏭</button>
+          <button data-go="flip" title="Flip board (F)">⇅</button>
+        </div>
+        <div class="keys">← → to step · ↑ ↓ jump between your mistakes · F flips</div>
+        <div class="card" style="margin-top:14px;padding:12px 14px">
+          <h2>Winning chances, from your side</h2><div class="chart" id="c-eval"></div>
+          <div class="legend"><span><i style="background:var(--blunder)"></i>Blunder</span><span><i style="background:var(--mistake)"></i>Mistake</span><span><i style="background:var(--claude)"></i>Claude commented</span></div>
+          ${G.plies.some((p) => p.clock != null) ? `<h2 style="margin-top:12px">Time spent per move (yours)</h2><div class="chart" id="c-clock"></div>` : ""}
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card now" id="now"></div>
+        <div class="card"><h2>Moves</h2><div class="moves" id="moves"></div></div>
+        <div class="card report" id="report">${reportHTML(rv)}</div>
+      </div>
+    </div>`;
+  app.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => step(b.dataset.go)));
+  app.querySelectorAll("[data-ply]").forEach((b) => b.addEventListener("click", () => setPly(+b.dataset.ply)));
+  renderMoves();
+  update();
+}
+function reportHTML(rv) {
+  if (!rv) return `<h2>Claude's review</h2><p class="empty">No review for this game yet. Ask Claude to analyse it; the report is saved to <code>reviews/${esc(G.key)}.json</code> at session close.</p>`;
+  const sec = (t, v) => v ? `<h4>${t}</h4><p>${mdInline(v)}</p>` : "";
+  return `<h2>Claude's review</h2>${sec("Snapshot", rv.snapshot)}
+    ${rv.moments.length ? `<h4>The moments that decided it</h4>` + rv.moments.map((m) => {
+      const p = G.plies[m.ply - 1];
+      return `<div class="moment" data-ply="${m.ply}"><span class="mv">${esc(moveLabel(p))}</span> <span class="cls"><i class="i-${p.cls}"></i>${CLS[p.cls].label}</span><br>${mdInline(m.comment)}${m.instead ? `<br><b>Instead:</b> ${mdInline(m.instead)}` : ""}${m.rule ? `<br><b>Rule:</b> ${mdInline(m.rule)}` : ""}</div>`;
+    }).join("") : ""}
+    ${sec("What you got right", rv.right)}${sec("Pattern check", rv.pattern)}${sec("Drill", rv.drill)}${sec("Avoid next game", rv.avoid)}
+    ${rv.tags.length ? `<div class="tags">${rv.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}`;
+}
+function commentFor(ply) {
+  const rv = G.review; if (!rv || !ply) return null;
+  return rv.moments.find((m) => m.ply === ply) || (rv.notes[String(ply)] ? { comment: rv.notes[String(ply)] } : null);
+}
+function renderMoves() {
+  let s = "";
+  G.plies.forEach((p, i) => {
+    const white = p.ply % 2 === 1;
+    if (white) s += `<span class="no">${p.move_no}.</span>`;
+    else if (i === 0) s += `<span class="no">${p.move_no}.</span><span></span>`;
+    const c = CLS[p.cls], mine = myPly(G, p);
+    s += `<button data-mv="${p.ply}" class="${mine ? "" : "opp"}" title="${c.label}${mine ? "" : " (opponent)"}">
+      <i class="cls"><i class="i-${p.cls}"></i></i>${esc(p.san)}${c.sym && p.cls !== "best" ? `<span class="sym" style="color:var(--${p.cls})">${c.sym}</span>` : ""}${commentFor(p.ply) ? `<span class="pin" title="Claude commented"></span>` : ""}</button>`;
+  });
+  const host = document.getElementById("moves");
+  host.innerHTML = s;
+  host.querySelectorAll("[data-mv]").forEach((b) => b.addEventListener("click", () => setPly(+b.dataset.mv)));
+}
+function spentOn(i) {
+  // seconds used on ply i (1-based); clocks are after the move, so compare with the same side's previous clock
+  const p = G.plies[i - 1], prev = G.plies[i - 3];
+  if (!p || p.clock == null) return null;
+  const inc = +(String(G.time_control).split("+")[1] || 0);
+  const before = prev ? prev.clock : +(String(G.time_control).split("+")[0]);
+  return before == null || isNaN(before) ? null : Math.max(0, before - p.clock + inc);
+}
+function update() {
+  const p = cur ? G.plies[cur - 1] : null, next = G.plies[cur];
+  const fen = p ? p.fen : G.start_fen;
+  const hi = p ? [p.uci.slice(0, 2), p.uci.slice(2, 4)] : [];
+  document.getElementById("board").innerHTML = boardHTML(fen, flip, hi);
+  const arrows = [];
+  if (p && p.best_uci && p.cls !== "best" && p.cls !== "good") arrows.push({ uci: p.best_uci, color: css("--best") });
+  if (p && next && next.best_uci && (p.cls === "mistake" || p.cls === "blunder")) arrows.push({ uci: next.best_uci, color: css("--blunder") });
+  document.getElementById("arrows").innerHTML = arrowsSVG(arrows, flip);
+
+  const now = document.getElementById("now");
+  if (!p) {
+    now.innerHTML = `<h3>Start position</h3><p class="empty">You played ${G.colour}. Step through with → or click any point on the graph.</p>${firstComment()}`;
+  } else {
+    const mine = myPly(G, p), c = CLS[p.cls];
+    const prevCp = cur > 1 ? G.plies[cur - 2].cp : G.start_cp;
+    const cm = commentFor(p.ply), spent = spentOn(cur);
+    now.innerHTML = `<h3>${esc(moveLabel(p))} <span class="cls"><i class="i-${p.cls}"></i>${c.label}${c.sym && p.cls !== "best" ? " " + c.sym : ""}</span>
+        <span style="color:var(--muted);font-size:13px;font-weight:450">${mine ? "your move" : "opponent's move"}</span></h3>
+      <dl>
+        <dt>Eval (you)</dt><dd>${fmtEval(povCp(G, prevCp))} → <b>${fmtEval(povCp(G, p.cp))}</b>${p.lost >= 1 ? ` · cost ${p.lost.toFixed(0)}% of ${mine ? "your" : "their"} winning chances` : ""}</dd>
+        ${p.cls !== "best" && p.best_san ? `<dt>Best was</dt><dd><b style="color:var(--good-text)">${esc(p.best_san)}</b> <span style="color:var(--muted)">${esc(p.best_line || "")}</span></dd>` : ""}
+        ${p.reply_line ? `<dt>${p.cls === "mistake" || p.cls === "blunder" ? "What it allowed" : "Engine line"}</dt><dd>${esc(p.reply_line)}</dd>` : ""}
+        ${p.clock != null ? `<dt>Clock</dt><dd>${fmtClock(p.clock)} left${spent != null ? ` · spent ${Math.round(spent)}s` : ""}</dd>` : ""}
+      </dl>
+      ${cm ? `<div class="claude"><div class="who">Claude</div><p>${mdInline(cm.comment)}</p>${cm.instead ? `<p><b>Instead:</b> ${mdInline(cm.instead)}</p>` : ""}${cm.rule ? `<p class="rule">Rule: ${mdInline(cm.rule)}</p>` : ""}</div>` : ""}`;
+  }
+  document.querySelectorAll("#moves [data-mv]").forEach((b) => b.classList.toggle("cur", +b.dataset.mv === cur));
+  const curBtn = document.querySelector(`#moves [data-mv="${cur}"]`);
+  if (curBtn) curBtn.scrollIntoView({ block: "nearest" });
+  drawGameCharts();
+  history.replaceState(null, "", `#/game/${encodeURIComponent(G.key)}/${cur}`);
+}
+function firstComment() {
+  const rv = G.review;
+  return rv && rv.snapshot ? `<div class="claude"><div class="who">Claude · snapshot</div><p>${mdInline(rv.snapshot)}</p></div>` : "";
+}
+function drawGameCharts() {
+  const n = G.plies.length + 1;
+  const win = [G.colour === "white" ? winPct(G.start_cp) : winPct(-G.start_cp), ...G.plies.map((p) => p.win)];
+  const xTicks = [];
+  for (let m = 10; m <= G.plies[G.plies.length - 1]?.move_no; m += 10) xTicks.push({ i: 2 * m - 1, label: "move " + m });
+  const tipAt = (i) => {
+    if (!i) return `<b>Start</b>`;
+    const p = G.plies[i - 1], cm = commentFor(p.ply);
+    return `<b>${esc(moveLabel(p))}</b> ${CLS[p.cls].label}<br>${fmtEval(povCp(G, p.cp))} · ${p.win.toFixed(0)}% to win${cm ? `<br><span style="color:var(--claude)">Claude: ${esc(cm.comment).slice(0, 110)}${cm.comment.length > 110 ? "…" : ""}</span>` : ""}`;
+  };
+  mountChart(document.getElementById("c-eval"), {
+    n, h: 150, padL: 34, y: { min: 0, max: 100, ticks: [0, 50, 100], fmt: (t) => t + "%" }, base: 50, xTicks, current: cur, label: "Winning chances",
+    layers: [
+      { type: "area", values: win, color: css("--accent"), from: 50 },
+      { type: "dots", values: win, color: (i) => { const p = G.plies[i - 1]; return p && myPly(G, p) && (p.cls === "blunder" || p.cls === "mistake") ? css("--" + p.cls) : null; } },
+      { type: "pins", values: win.map((_, i) => !!commentFor(i)) },
+    ],
+    tip: tipAt, click: (i) => setPly(i),
+  });
+  const ch = document.getElementById("c-clock");
+  if (ch) {
+    const spent = win.map((_, i) => (i && myPly(G, G.plies[i - 1]) ? spentOn(i) : null));
+    const max = Math.max(30, ...spent.filter((x) => x != null));
+    const top = Math.ceil(max / 30) * 30;
+    mountChart(ch, {
+      n, h: 90, padL: 34, y: { min: 0, max: top, ticks: [0, top], fmt: (t) => t + "s" }, base: 0, current: cur, noX: true, label: "Seconds spent per move",
+      layers: [{ type: "stack", values: spent.map((s) => s == null ? null : [s]), colors: [css("--muted")] }],
+      tip: (i) => spent[i] == null ? null : `<b>${esc(moveLabel(G.plies[i - 1]))}</b><br>${Math.round(spent[i])}s spent · ${fmtClock(G.plies[i - 1].clock)} left`,
+      click: (i) => setPly(i),
+    });
+  }
+}
+const winPct = (cp) => 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * Math.max(-1500, Math.min(1500, cp)))) - 1);
+function setPly(i) { cur = Math.max(0, Math.min(G.plies.length, i)); update(); }
+function step(what) {
+  if (what === "start") setPly(0);
+  else if (what === "end") setPly(G.plies.length);
+  else if (what === "prev") setPly(cur - 1);
+  else if (what === "next") setPly(cur + 1);
+  else if (what === "flip") { flip = !flip; update(); }
+}
+function jumpMistake(dir) {
+  const bad = G.plies.filter((p) => myPly(G, p) && (p.cls === "mistake" || p.cls === "blunder" || commentFor(p.ply))).map((p) => p.ply);
+  const t = dir > 0 ? bad.find((x) => x > cur) : [...bad].reverse().find((x) => x < cur);
+  if (t != null) setPly(t);
+}
+document.addEventListener("keydown", (e) => {
+  if (!G || !location.hash.startsWith("#/game/") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = { ArrowLeft: "prev", ArrowRight: "next", Home: "start", End: "end", f: "flip", F: "flip" }[e.key];
+  if (k) { e.preventDefault(); step(k); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); jumpMistake(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); jumpMistake(-1); }
+});
+
+// ---------- routing + theme ----------
+function go(key, ply) { location.hash = `#/game/${encodeURIComponent(key)}/${ply ?? 0}`; }
+function route() {
+  hideTip();
+  const h = location.hash || "#/";
+  const m = h.match(/^#\/game\/([^/]+)(?:\/(\d+))?/);
+  document.getElementById("nav-overview").classList.toggle("on", h === "#/" || h === "#");
+  document.getElementById("nav-games").classList.toggle("on", h.startsWith("#/games") || !!m);
+  document.getElementById("nav-repertoire").classList.toggle("on", h.startsWith("#/repertoire"));
+  if (m) { if (!G || G.key !== decodeURIComponent(m[1])) renderGame(decodeURIComponent(m[1]), +(m[2] || 0)); else setPly(+(m[2] || 0)); }
+  else { G = null; if (h.startsWith("#/games")) renderGames(); else if (h.startsWith("#/repertoire")) renderRepertoire(); else renderOverview(); }
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", route);
+
+const themes = ["auto", "light", "dark"];
+let theme = "auto";
+try { theme = localStorage.getItem("chess-theme") || "auto"; } catch (e) { theme = "auto"; }
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  document.getElementById("theme").textContent = theme[0].toUpperCase() + theme.slice(1);
+}
+document.getElementById("theme").addEventListener("click", () => {
+  theme = themes[(themes.indexOf(theme) + 1) % 3];
+  try { localStorage.setItem("chess-theme", theme); } catch (e) { /* private mode: theme just won't persist */ }
+  applyTheme(); route();
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => theme === "auto" && route());
+applyTheme();
+route();
+</script>
+</body>
+</html>

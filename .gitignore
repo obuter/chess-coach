@@ -1,0 +1,17 @@
+# Environment
+.venv/
+__pycache__/
+.DS_Store
+
+# Personal: your games, your coach's notes about you, and everything built from them.
+/config.toml
+/STUDENT.md
+/STATE.md
+/PROGRESS.md
+/REPERTOIRE.md
+/milestones.json
+/games/
+/reviews/
+/cache/
+/archive/
+/data.js

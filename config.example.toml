@@ -1,0 +1,7 @@
+# Copy to config.toml (gitignored) and fill in.
+
+# Your chess.com / lichess username, exactly as it appears in the PGN headers.
+player = "your-username"
+
+# Optional: path to the Stockfish binary. If left out, `stockfish` on your PATH is used.
+# stockfish = "/opt/homebrew/bin/stockfish"
