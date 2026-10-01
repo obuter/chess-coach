@@ -410,46 +410,96 @@ function tile(label, value, delta, goodWhenUp) {
   return `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${value}</div>${d}</div>`;
 }
 
+// ---------- per-game facts used by the overview ----------
+const bestWin = (g) => Math.max(...g.plies.map((p) => p.win));
+const wasWinning = (g) => bestWin(g) >= 90;           // +6 or better at some point
+const lostOnTime = (g) => g.outcome === "loss" && /on time/.test(g.termination);
+const tcName = (tc) => ({ "600": "10|0", "900+10": "15|10", "600+5": "10|5", "1200": "20|0" }[tc] || tc);
+function evalAt10(g) {
+  const p = g.plies.find((p) => p.move_no === 10 && myPly(g, p));
+  return p ? povCp(g, p.cp) / 100 : null;
+}
+const median = (xs) => { const v = xs.filter((x) => x != null).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
+const wdl = (gs) => `${gs.filter((g) => g.outcome === "win").length}–${gs.filter((g) => g.outcome === "draw").length}–${gs.filter((g) => g.outcome === "loss").length}`;
+const signed = (x, d = 1) => x == null ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(d);
+function openingGroup(g) {
+  const [m1, m2] = [g.plies[0]?.san, g.plies[1]?.san];
+  if (g.colour === "white") return m2 === "e5" ? "White · 1.e4 e5" : m2 === "d5" ? "White · 1.e4 d5" : "White · 1.e4, other replies";
+  if (m1 === "e4") return m2 === "e5" ? "Black · 1.e4 e5" : m2 === "Nf6" ? "Black · 1.e4 Nf6" : "Black · 1.e4, other";
+  return m1 === "d4" ? "Black · 1.d4" : "Black · other first moves";
+}
+
 function renderOverview() {
   if (!games.length) {
     app.innerHTML = `<div class="card"><h2>No games yet</h2><p class="sub">Put a PGN export in <code>games/</code>, set <code>player</code> in <code>config.toml</code>, and run <code>.venv/bin/python build.py</code>. Then ask Claude Code to review a game.</p></div>`;
     return;
   }
   const n = games.length;
-  const w = games.filter((g) => g.outcome === "win").length, l = games.filter((g) => g.outcome === "loss").length, dr = n - w - l;
-  const first5 = real.slice(0, 5), last5 = real.slice(-5);
-  const accF = mean(first5.map((g) => g.accuracy)), accL = mean(last5.map((g) => g.accuracy));
-  const blF = mean(first5.map(blunders)), blL = mean(last5.map(blunders));
   const elos = games.map((g) => g.my_elo);
   const eloFirst = elos.find((e) => e != null), eloLast = [...elos].reverse().find((e) => e != null);
   const rated = elos.filter((e) => e != null);
   const notes = games.reduce((a, g) => a + annotations(g), 0), reviewed = games.filter((g) => g.review).length;
+  const winning = real.filter(wasWinning), converted = winning.filter((g) => g.outcome === "win");
+  const timeLosses = real.filter(lostOnTime);
+  const tlByTc = {}; timeLosses.forEach((g) => { tlByTc[tcName(g.time_control)] = (tlByTc[tcName(g.time_control)] || 0) + 1; });
   const xTicks = games.map((g, i) => ({ i, label: String(i + 1) })).filter((t, i) => n <= 20 || i % 5 === 0);
   const vlines = (D.milestones || []).map((m) => ({ i: games.findIndex((g) => g.key === m.after), label: m.short || "" })).filter((m) => m.i >= 0);
   const gameTip = (i, extra) => { const g = games[i]; return `<b>${i + 1}. vs ${esc(g.opponent)}</b> <span class="m">${esc(shortDate(g))}</span><br>${extra}`; };
+  const K = Math.min(10, Math.max(3, Math.round(n / 6)));   // rolling window grows with the history
 
   app.innerHTML = `
     <div class="tiles">
-      ${tile("Games analysed", n, { text: `${reviewed} with Claude's review` })}
-      ${tile("Record", `${w}–${dr}–${l}`, { text: "wins – draws – losses" })}
-      ${tile("Rating", eloLast ?? "–", { text: rated.length ? `range ${Math.min(...rated)}–${Math.max(...rated)} · started at ${eloFirst}` : "no ratings in the PGN headers" })}
-      ${tile("Accuracy, last 5", accL == null ? "–" : accL.toFixed(0) + "%", { v: accL - accF, fmt: (x) => x.toFixed(1) + " pts", vs: "vs first 5" }, true)}
-      ${tile("Blunders per game, last 5", blL == null ? "–" : blL.toFixed(1), { v: blL - blF, fmt: (x) => x.toFixed(1), vs: "vs first 5" }, false)}
+      ${tile("Games", n, { text: `${real.length} real · ${reviewed} reviewed by Claude` })}
+      ${tile("Record", wdl(real), { text: "wins – draws – losses" })}
+      ${tile("Rating", eloLast ?? "–", { text: rated.length ? `started at ${eloFirst} · range ${Math.min(...rated)}–${Math.max(...rated)}` : "no ratings in the PGN headers" })}
+      ${tile("Winning positions won", `${converted.length} of ${winning.length}`, { text: "games where you reached +6 or better" })}
+      ${tile("Lost on time", timeLosses.length, { text: Object.entries(tlByTc).map(([k, v]) => `${v} at ${k}`).join(" · ") || "none" })}
       ${tile("Moves Claude annotated", notes, { text: `across ${reviewed} games` })}
     </div>
+    <div class="card" style="margin-bottom:16px"><h2>From the beginning, day by day</h2>
+      <p class="sub">Games under 5 moves are left out. “Won from winning” counts games where you reached +6 or better.</p>
+      <div style="overflow-x:auto" id="journey"></div></div>
     <div class="grid2">
       <div class="stack">
         <div class="card"><h2>Rating</h2><p class="sub">chess.com rating at the start of each game. Orange lines mark coaching changes.</p><div class="chart" id="c-elo"></div></div>
-        <div class="card"><h2>Accuracy</h2><p class="sub">Per game (dots) and the 5-game average (line). Lichess formula, from win% lost per move.</p><div class="chart" id="c-acc"></div></div>
+        <div class="card"><h2>Accuracy</h2><p class="sub">Per game (dots) and the ${K}-game average (line). Lichess formula, from win% lost per move.</p><div class="chart" id="c-acc"></div></div>
         <div class="card"><h2>Mistakes and blunders per game</h2><p class="sub">A blunder costs 20%+ of your winning chances in one move; a mistake 10–20%.</p><div class="chart" id="c-err"></div>
           <div class="legend"><span><i style="background:var(--blunder)"></i>Blunder</span><span><i style="background:var(--mistake)"></i>Mistake</span></div></div>
+        <div class="card"><h2>Openings</h2><p class="sub">Median evaluation after your 10th move, from your side. Above zero means the opening went your way.</p><div id="openings"></div></div>
       </div>
       <div class="stack">
-        <div class="card"><h2>Is the coaching working?</h2><p class="sub">How often each weakness tag showed up, per block of 5 games. Tags come from Claude's reviews. Lighter means it happened less. Games under 5 moves are left out.</p><div id="heat"></div></div>
+        <div class="card"><h2>Is the coaching working?</h2><p class="sub">Share of games each weakness showed up in, per day and over your last 10 games. Tags come from Claude's reviews. Lighter means it happened less.</p><div id="heat" style="overflow-x:auto"></div></div>
+        <div class="card"><h2>Time control</h2><p class="sub">Where the clock losses come from.</p><div id="tcs"></div></div>
         <div class="card md">${mdBlock(D.state_md || "_No STATE.md_")}</div>
         ${(D.milestones || []).length ? `<div class="card"><h2>Coaching timeline</h2><p class="sub">Changes that came out of the reviews.</p><ul class="milestones">${D.milestones.map((m) => `<li><b>${esc(m.date)}</b> — ${mdInline(m.label)}</li>`).join("")}</ul></div>` : ""}
       </div>
     </div>`;
+
+  // day-by-day table
+  const days = [...new Set(real.map((g) => g.date))];
+  const row = (label, gs, first) => {
+    const w = gs.filter(wasWinning), el = gs.map((g) => g.my_elo).filter((e) => e != null);
+    return `<tr${first ? "" : ' style="font-weight:600"'}><td>${esc(label)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td>
+      <td class="num">${el.length ? `${el[0]} → ${el[el.length - 1]}` : "–"}</td>
+      <td class="num">${mean(gs.map((g) => g.accuracy))?.toFixed(0) ?? "–"}%</td>
+      <td class="num">${mean(gs.map(blunders))?.toFixed(1) ?? "–"}</td>
+      <td class="num">${w.filter((g) => g.outcome === "win").length} of ${w.length}</td>
+      <td class="num">${gs.filter(lostOnTime).length}</td>
+      <td class="hide-sm">${[...new Set(gs.map((g) => tcName(g.time_control)))].join(", ")}</td></tr>`;
+  };
+  document.getElementById("journey").innerHTML = `<table class="list"><thead><tr><th>Day</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Rating</th><th class="num">Accuracy</th><th class="num">Blunders / game</th><th class="num">Won from winning</th><th class="num">Lost on time</th><th class="hide-sm">Time controls</th></tr></thead>
+    <tbody>${days.map((d) => row(d, real.filter((g) => g.date === d), true)).join("")}${real.length > 10 ? row("Last 10 games", real.slice(-10), true) : ""}${row("All games", real, false)}</tbody></table>`;
+
+  // openings
+  const groups = {}; real.forEach((g) => { (groups[openingGroup(g)] = groups[openingGroup(g)] || []).push(g); });
+  document.getElementById("openings").innerHTML = `<table class="list"><thead><tr><th>Opening</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Move 10</th></tr></thead><tbody>
+    ${Object.entries(groups).sort((a, b) => b[1].length - a[1].length).map(([k, gs]) => { const m = median(gs.map(evalAt10));
+      return `<tr><td>${esc(k)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td><td class="num" style="color:${m == null ? "var(--muted)" : m >= 0 ? "var(--good-text)" : "var(--bad-text)"}">${signed(m)}</td></tr>`; }).join("")}</tbody></table>`;
+
+  // time controls
+  const tcs = {}; real.forEach((g) => { (tcs[tcName(g.time_control)] = tcs[tcName(g.time_control)] || []).push(g); });
+  document.getElementById("tcs").innerHTML = `<table class="list"><thead><tr><th>Time control</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Lost on time</th></tr></thead><tbody>
+    ${Object.entries(tcs).sort((a, b) => b[1].length - a[1].length).map(([k, gs]) => `<tr><td>${esc(k)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td><td class="num">${gs.filter(lostOnTime).length}</td></tr>`).join("")}</tbody></table>`;
 
   const eMin = Math.floor((Math.min(...rated) - 20) / 50) * 50;
   const eMax = Math.ceil((Math.max(...rated) + 20) / 50) * 50;
@@ -457,18 +507,20 @@ function renderOverview() {
   if (!rated.length) document.getElementById("c-elo").innerHTML = `<p class="empty">No ratings in the PGN headers.</p>`;
   else mountChart(document.getElementById("c-elo"), {
     n, h: 170, y: { min: eMin, max: eMax, ticks: eTicks }, xTicks, vlines, label: "Rating per game",
-    layers: [{ type: "line", values: elos, color: css("--accent") }, { type: "dots", values: elos, color: css("--accent"), r: 3.5 }],
+    layers: [{ type: "line", values: elos, color: css("--accent") }, { type: "dots", values: elos, color: css("--accent"), r: 3 }],
     tip: (i) => gameTip(i, `Rating ${games[i].my_elo ?? "?"} · ${games[i].outcome}`), click: (i) => go(games[i].key),
   });
-  const acc = games.map((g) => g.accuracy);
+  const acc = games.map((g) => g.plies.length >= 10 ? g.accuracy : null);
+  const accRoll = rolling(acc, K);
   mountChart(document.getElementById("c-acc"), {
     n, h: 170, y: { min: 0, max: 100, ticks: [0, 25, 50, 75, 100], fmt: (t) => t + "%" }, xTicks, vlines, label: "Accuracy per game",
-    layers: [{ type: "dots", values: acc, color: css("--accent"), r: 3.5 }, { type: "line", values: rolling(acc, 5), color: css("--accent") }],
-    tip: (i) => gameTip(i, `Accuracy ${acc[i]?.toFixed(1)}% · 5-game avg ${rolling(acc, 5)[i]?.toFixed(1)}%<br><span class="m">Opponent ${games[i].opp_accuracy?.toFixed(1)}%</span>`),
+    layers: [{ type: "dots", values: acc, color: css("--accent"), r: 3 }, { type: "line", values: accRoll, color: css("--accent") }],
+    tip: (i) => acc[i] == null ? gameTip(i, "Too short to count") : gameTip(i, `Accuracy ${acc[i].toFixed(1)}% · ${K}-game avg ${accRoll[i]?.toFixed(1)}%<br><span class="m">Opponent ${games[i].opp_accuracy?.toFixed(1)}%</span>`),
     click: (i) => go(games[i].key),
   });
   const errMax = Math.max(4, ...games.map((g) => g.counts.blunder + g.counts.mistake));
-  const errTicks = []; for (let t = 0; t <= errMax; t += errMax > 8 ? 2 : 1) errTicks.push(t);
+  const errTicks = []; for (let t = 0; t <= errMax; t += errMax > 8 ? 5 : 1) errTicks.push(t);
+  if (errTicks[errTicks.length - 1] < errMax) errTicks.push(errTicks[errTicks.length - 1] + (errMax > 8 ? 5 : 1));
   mountChart(document.getElementById("c-err"), {
     n, h: 170, y: { min: 0, max: errTicks[errTicks.length - 1], ticks: errTicks }, base: 0, xTicks, vlines, label: "Mistakes and blunders per game",
     layers: [{ type: "stack", values: games.map((g) => [g.counts.blunder, g.counts.mistake]), colors: [css("--blunder"), css("--mistake")] }],
@@ -481,22 +533,22 @@ function renderOverview() {
 function renderHeat(host) {
   const rev = real.filter((g) => g.review);
   if (!rev.length) { host.innerHTML = `<p class="empty">No reviews yet — Claude writes them to <code>reviews/</code> at session close.</p>`; return; }
-  const blocks = [];
-  for (let i = 0; i < rev.length; i += 5) blocks.push(rev.slice(i, i + 5));
+  // one column per day, plus the last 10 games
+  const cols = [...new Set(rev.map((g) => g.date))].map((d) => ({ label: d.slice(5), games: rev.filter((g) => g.date === d) }));
+  if (rev.length > 10) cols.push({ label: "Last 10", games: rev.slice(-10) });
   const skip = new Set(["clean-game", "tactic-found", "opening-fine"]);
   const totals = {};
   rev.forEach((g) => g.review.tags.forEach((t) => { if (!skip.has(t)) totals[t] = (totals[t] || 0) + 1; }));
   const tags = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
   const ramp = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map(css);
   const cell = (hits, of) => {
-    if (!hits) return `<td style="color:var(--muted)">·</td>`;
+    if (!hits) return `<td style="color:var(--muted)" title="0 of ${of} games">·</td>`;
     const r = hits / of, k = Math.min(4, Math.ceil(r * 5) - 1);
-    return `<td style="background:${ramp[k]};color:${k >= 2 ? "#fff" : "#0b0b0b"}" title="${hits} of ${of} games">${hits}/${of}</td>`;
+    return `<td style="background:${ramp[k]};color:${k >= 2 ? "#fff" : "#0b0b0b"}" title="${hits} of ${of} games">${Math.round(r * 100)}%</td>`;
   };
-  const good = rev.map((g) => g.review.tags.includes("clean-game") ? 1 : 0);
-  host.innerHTML = `<table class="heat"><tr><th></th>${blocks.map((b, i) => `<th>Games ${i * 5 + 1}–${i * 5 + b.length}</th>`).join("")}</tr>
-    ${tags.map((t) => `<tr><th class="tag">${esc(t)}</th>${blocks.map((b) => cell(b.filter((g) => g.review.tags.includes(t)).length, b.length)).join("")}</tr>`).join("")}
-    <tr><th class="tag" style="color:var(--good-text)">clean-game ✓</th>${blocks.map((b, i) => { const c = good.slice(i * 5, i * 5 + b.length).reduce((a, x) => a + x, 0); return `<td>${c ? c + "/" + b.length : "·"}</td>`; }).join("")}</tr></table>`;
+  host.innerHTML = `<table class="heat"><tr><th></th>${cols.map((c) => `<th>${esc(c.label)}<br><span style="font-weight:400">${c.games.length} games</span></th>`).join("")}</tr>
+    ${tags.map((t) => `<tr><th class="tag">${esc(t)}</th>${cols.map((c) => cell(c.games.filter((g) => g.review.tags.includes(t)).length, c.games.length)).join("")}</tr>`).join("")}
+    <tr><th class="tag" style="color:var(--good-text)">clean-game ✓</th>${cols.map((c) => { const k = c.games.filter((g) => g.review.tags.includes("clean-game")).length; return `<td title="${k} of ${c.games.length} games">${k ? Math.round(100 * k / c.games.length) + "%" : "·"}</td>`; }).join("")}</tr></table>`;
 }
 
 // ---------- games list ----------
