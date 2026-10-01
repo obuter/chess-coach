@@ -33,6 +33,7 @@ The Stockfish path and the student's username come from `config.toml`; python-ch
 - **Never** claim a piece was hanging, a move was forced, a tactic existed, or a position was winning without a FEN or eval from `analyze.py` backing it up. Reading a move list and picturing the board is unreliable — when this coach was first set up, four of five by-eye conclusions about these games turned out to be wrong once the engine ran.
 - Quote real moves with their real move numbers, copied from the PGN.
 - If your intuition and the engine disagree, the engine is right. Say so plainly and move on.
+- Before writing a review, run `.venv/bin/python explain.py KEY [KEY...]` (keys from `build.py --list`; the game must already be analysed, i.e. cached). For every costly move it reads the mechanics off the actual board: what the best move captures and whether that piece was guarded, whether the reply wins material, missed mates in one, eval curve and clock. Base your claims on this output, not on the move list.
 - To check a specific position, set up the FEN the script printed:
   ```bash
   .venv/bin/python -c "import chess; b=chess.Board('FEN HERE'); print(b)"
