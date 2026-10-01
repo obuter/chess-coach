@@ -216,6 +216,64 @@ def repertoire_boards(text):
     return boards
 
 
+PUZZLE_DEPTH = 12     # per legal move; only grades alternatives, the answer comes from the depth-16 cache
+PUZZLE_MAX_STEPS = 3  # a forced mate is played out move by move, up to this many of your moves
+
+
+def puzzle_step(board, best, engine):
+    """Score every legal move from the mover's side; the page grades a click against these."""
+    pov, moves = board.turn, {}
+    for move in board.legal_moves:
+        san = board.san(move)
+        board.push(move)
+        info = engine.analyse(board, chess.engine.Limit(depth=PUZZLE_DEPTH))
+        moves[move.uci()] = {"san": san, "cp": info["score"].pov(pov).score(mate_score=10000), "fen": board.fen()}
+        board.pop()
+    best = best or max(moves, key=lambda u: moves[u]["cp"])
+    return {"fen": board.fen(), "best": best, "moves": moves}
+
+
+def build_puzzle(fen, best_uci, engine):
+    """One puzzle: the position before your move, played forward while it is a forced mate."""
+    board, steps = chess.Board(fen), []
+    while True:
+        step = puzzle_step(board, best_uci if not steps else None, engine)
+        steps.append(step)
+        board.push(chess.Move.from_uci(step["best"]))
+        if board.is_game_over() or step["moves"][step["best"]]["cp"] < 9990 or len(steps) == PUZZLE_MAX_STEPS:
+            break
+        reply = engine.analyse(board, chess.engine.Limit(depth=PUZZLE_DEPTH))["pv"][0]
+        step["reply"] = {"uci": reply.uci(), "san": board.san(reply)}
+        board.push(reply)
+    return steps
+
+
+def build_puzzles(out, engine_box):
+    """Every reviewed moment where you missed the engine's move becomes a puzzle. Cached in cache/puzzles/."""
+    folder = CACHE / "puzzles"
+    puzzles = []
+    for g in out:
+        rv = g["review"]
+        for m in (rv["moments"] if rv else []):
+            p = g["plies"][m["ply"] - 1]
+            if (p["ply"] % 2 == 1) != (g["colour"] == "white") or not p.get("best_uci") or p["best_uci"] == p["uci"]:
+                continue
+            fen = g["plies"][m["ply"] - 2]["fen"] if m["ply"] > 1 else g["start_fen"]
+            pid = f"{g['key']}_{m['ply']}"
+            path = folder / f"{pid}.json"
+            data = json.loads(path.read_text()) if path.exists() else None
+            if not data or data.get("fen") != fen or data.get("best") != p["best_uci"] or data.get("depth") != PUZZLE_DEPTH:
+                if engine_box[0] is None:
+                    engine_box[0] = open_engine()
+                print(f"  puzzle {pid} ...", flush=True)
+                data = {"fen": fen, "best": p["best_uci"], "depth": PUZZLE_DEPTH,
+                        "steps": build_puzzle(fen, p["best_uci"], engine_box[0])}
+                folder.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(data))
+            puzzles.append({"id": pid, "key": g["key"], "ply": m["ply"], "steps": data["steps"]})
+    return puzzles
+
+
 def summarise(key, game, source, ev, review):
     h = game.headers
     pov = chess.WHITE if h["White"].lower() == PLAYER.lower() else chess.BLACK
@@ -302,6 +360,7 @@ def main():
                 except json.JSONDecodeError as e:
                     warnings.append(f"{key}: reviews/{rpath.name} is not valid JSON: {e}")
             out.append(summarise(key, game, source, ev, review))
+        puzzles = build_puzzles(out, engine_box)
     finally:
         if engine_box[0] is not None:
             engine_box[0].quit()
@@ -315,7 +374,7 @@ def main():
     repertoire_md = (ROOT / "REPERTOIRE.md").read_text() if (ROOT / "REPERTOIRE.md").exists() else ""
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "player": PLAYER, "games": out, "milestones": milestones,
+        "player": PLAYER, "games": out, "milestones": milestones, "puzzles": puzzles,
         "state_md": (ROOT / "STATE.md").read_text() if (ROOT / "STATE.md").exists() else "",
         "repertoire_md": repertoire_md, "repertoire_boards": repertoire_boards(repertoire_md),
     }

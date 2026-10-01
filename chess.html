@@ -77,7 +77,7 @@ header.top {
 }
 header.top h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
 header.top h1 span { color: var(--muted); font-weight: 450; }
-nav { display: flex; gap: 4px; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
 nav a {
   text-decoration: none; color: var(--ink-2); padding: 5px 12px; border-radius: 8px; font-weight: 500;
 }
@@ -227,6 +227,34 @@ table.list tr.row:hover td { background: var(--surface-2); }
 .setup ol li::before { content: counter(mv) ". "; color: var(--muted); font-weight: 450; }
 .setup .cap { color: var(--muted); font-size: 12.5px; margin-top: 8px; max-width: 200px; }
 
+/* puzzles */
+.sq.pickable { cursor: pointer; }
+.sq.sel::before { content: ""; position: absolute; inset: 0; background: var(--accent-wash); box-shadow: inset 0 0 0 3px var(--accent); }
+.sq .dot { position: absolute; width: 28%; height: 28%; border-radius: 50%; background: rgba(0, 0, 0, .22); }
+.sq .ring { position: absolute; inset: 4%; border-radius: 50%; box-shadow: inset 0 0 0 4px rgba(0, 0, 0, .22); }
+.pz-prompt { font-size: 18px; font-weight: 650; margin: 0 0 2px; }
+.pz-from { color: var(--muted); font-size: 13.5px; margin: 0; }
+.pz-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.pz-actions button, .chips button {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px;
+}
+.pz-actions button:hover, .chips button:hover { background: var(--surface-2); }
+.pz-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.verdict { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 14.5px; background: var(--surface-2); }
+.verdict.good { color: var(--good-text); background: rgba(12, 163, 12, .09); }
+.verdict.bad { color: var(--bad-text); background: rgba(208, 59, 59, .08); }
+.verdict b { color: inherit; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.chips button.on { background: var(--surface-2); border-color: var(--axis); font-weight: 600; }
+.pz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 4px; }
+.pz-grid button {
+  height: 30px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); cursor: pointer;
+  font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; padding: 0;
+}
+.pz-grid button.solved { background: var(--best); border-color: var(--best); color: #fff; }
+.pz-grid button.missed { background: var(--blunder); border-color: var(--blunder); color: #fff; }
+.pz-grid button.cur { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 @media (max-width: 900px) {
   .grid2, .game { grid-template-columns: 1fr; }
   main { padding: 16px; }
@@ -239,7 +267,7 @@ table.list tr.row:hover td { background: var(--surface-2); }
 <body>
 <header class="top">
   <h1>Chess Review <span id="who"></span></h1>
-  <nav><a href="#/" id="nav-overview">Overview</a><a href="#/games" id="nav-games">Games</a><a href="#/repertoire" id="nav-repertoire">Repertoire</a></nav>
+  <nav><a href="#/" id="nav-overview">Overview</a><a href="#/games" id="nav-games">Games</a><a href="#/repertoire" id="nav-repertoire">Repertoire</a><a href="#/puzzles" id="nav-puzzles">Puzzles</a><a href="#/drills" id="nav-drills">Drills</a></nav>
   <div class="spacer"></div>
   <button class="theme-btn" id="theme" title="Theme">Auto</button>
 </header>
@@ -624,14 +652,16 @@ function linkGames(root) {
 
 // ---------- game view ----------
 const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
-function boardHTML(fen, flip, hi) {
+function boardHTML(fen, flip, hi, pick) {
   const rows = fen.split(" ")[0].split("/");
   const grid = rows.map((r) => r.replace(/\d/g, (d) => ".".repeat(+d)).split(""));
   let s = "";
   for (let vr = 0; vr < 8; vr++) for (let vf = 0; vf < 8; vf++) {
     const r = flip ? 7 - vr : vr, f = flip ? 7 - vf : vf;
     const sq = "abcdefgh"[f] + (8 - r), pc = grid[r][f];
-    s += `<div class="sq ${(r + f) % 2 ? "d" : "l"}${hi.includes(sq) ? " hi" : ""}">`;
+    const sel = pick && pick.sel === sq, tgt = pick && pick.targets.includes(sq);
+    s += `<div class="sq ${(r + f) % 2 ? "d" : "l"}${hi.includes(sq) ? " hi" : ""}${sel ? " sel" : ""}${pick ? " pickable" : ""}" data-sq="${sq}">`;
+    if (tgt) s += `<span class="${pc === "." ? "dot" : "ring"}"></span>`;
     if (vf === 0) s += `<span class="co r">${8 - r}</span>`;
     if (vr === 7) s += `<span class="co f">${"abcdefgh"[f]}</span>`;
     if (pc !== ".") s += `<span class="pc ${pc === pc.toUpperCase() ? "w" : "b"}">${GLYPH[pc.toLowerCase()]}︎</span>`;
@@ -821,6 +851,424 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp") { e.preventDefault(); jumpMistake(-1); }
 });
 
+// ---------- puzzles ----------
+// Positions from your reviewed games where you missed the engine's move. build.py scored every
+// legal move with Stockfish, so a click is graded right here, offline. Progress lives in this browser.
+const PZ = [...(D.puzzles || [])].reverse();  // newest game first
+const pzRec = (() => { try { return JSON.parse(localStorage.getItem("chess-puzzles") || "{}"); } catch (e) { return {}; } })();
+const pzSave = () => { try { localStorage.setItem("chess-puzzles", JSON.stringify(pzRec)); } catch (e) { /* private mode: progress won't persist */ } };
+let pzFilter = "all", PZS = null;
+const MATE = 9990;
+const pzTop = (step) => Math.max(...Object.values(step.moves).map((m) => m.cp));
+const pzIsMate = (pz) => pzTop(pz.steps[0]) >= MATE;
+const PZ_FILTERS = {
+  all: { label: "All", test: () => true },
+  todo: { label: "Not tried", test: (pz) => !pzRec[pz.id] },
+  missed: { label: "Missed", test: (pz) => pzRec[pz.id] === "missed" },
+  mates: { label: "Mates", test: pzIsMate },
+};
+const pzList = () => PZ.filter(PZ_FILTERS[pzFilter].test);
+const pzMoment = (pz) => byKey[pz.key]?.review?.moments.find((m) => m.ply === pz.ply);
+const pzGo = (id) => { location.hash = `#/puzzles/${encodeURIComponent(id)}`; };
+
+function renderPuzzles(id) {
+  if (!PZ.length) {
+    PZS = null;
+    app.innerHTML = `<div class="card"><h2>No puzzles yet</h2><p class="sub">Puzzles come from the moments in Claude's reviews. Review a game, then run <code>.venv/bin/python build.py</code>.</p></div>`;
+    return;
+  }
+  const list = pzList();
+  const pz = PZ.find((p) => p.id === id) || list.find((p) => !pzRec[p.id]) || list[0] || PZ[0];
+  const g = byKey[pz.key];
+  PZS = { pz, g, step: 0, fen: pz.steps[0].fen, sel: null, hi: [], arrows: [], missed: false, done: false, busy: false, msg: null };
+  history.replaceState(null, "", `#/puzzles/${encodeURIComponent(pz.id)}`);
+  app.innerHTML = `
+    <div class="game">
+      <div>
+        <div class="board-wrap"><div class="board" id="board"></div><div id="arrows"></div></div>
+        <div class="controls"><button id="pz-prev" title="Previous puzzle">◀ Previous</button><button id="pz-next" title="Next puzzle">Next ▶</button></div>
+        <div class="keys">Click a piece, then the square to move it to.</div>
+      </div>
+      <div class="stack">
+        <div class="card now" id="pz-now"></div>
+        <div class="card" id="pz-pick"></div>
+      </div>
+    </div>`;
+  document.getElementById("board").addEventListener("click", (ev) => { const sq = ev.target.closest("[data-sq]"); if (sq) pzClick(sq.dataset.sq); });
+  document.getElementById("pz-prev").addEventListener("click", () => pzStep(-1));
+  document.getElementById("pz-next").addEventListener("click", () => pzStep(1));
+  pzDraw();
+  pzPicker();
+}
+function pzStep(dir) {
+  const list = pzList().length ? pzList() : PZ;
+  const i = list.findIndex((p) => p.id === PZS.pz.id);
+  const next = i < 0 ? list[0] : list[(i + dir + list.length) % list.length];
+  pzGo(next.id);
+}
+function pzPicker() {
+  const host = document.getElementById("pz-pick");
+  const solved = PZ.filter((p) => pzRec[p.id] === "solved").length, missed = PZ.filter((p) => pzRec[p.id] === "missed").length;
+  const list = pzList();
+  host.innerHTML = `<h2>Your puzzles</h2>
+    <p class="sub">${PZ.length} positions from your own games · <span style="color:var(--good-text)">${solved} solved first try</span> · <span style="color:var(--bad-text)">${missed} missed</span> · ${PZ.length - solved - missed} not tried</p>
+    <div class="chips">${Object.entries(PZ_FILTERS).map(([k, f]) => `<button data-f="${k}" class="${k === pzFilter ? "on" : ""}">${f.label} ${PZ.filter(f.test).length}</button>`).join("")}</div>
+    <div class="pz-grid">${list.map((p) => {
+      const gg = byKey[p.key], pl = gg.plies[p.ply - 1];
+      return `<button data-id="${esc(p.id)}" class="${pzRec[p.id] || ""}${p.id === PZS.pz.id ? " cur" : ""}" title="vs ${esc(gg.opponent)} · ${esc(gg.date)} · move ${pl.move_no}">${PZ.indexOf(p) + 1}</button>`;
+    }).join("") || `<span class="empty">Nothing here yet.</span>`}</div>
+    <div class="legend" style="margin-top:10px"><span><i style="background:var(--best)"></i>Solved first try</span><span><i style="background:var(--blunder)"></i>Missed — try again later</span><span><i style="background:var(--surface-2);border:1px solid var(--border)"></i>Not tried</span></div>`;
+  host.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { pzFilter = b.dataset.f; pzPicker(); }));
+  host.querySelectorAll("[data-id]").forEach((b) => b.addEventListener("click", () => pzGo(b.dataset.id)));
+}
+function pzDraw() {
+  const S = PZS, step = S.pz.steps[S.step], flipIt = S.g.colour === "black";
+  const targets = S.sel ? Object.keys(step.moves).filter((u) => u.startsWith(S.sel)).map((u) => u.slice(2, 4)) : [];
+  document.getElementById("board").innerHTML = boardHTML(S.fen, flipIt, S.hi, S.done ? null : { sel: S.sel, targets });
+  document.getElementById("arrows").innerHTML = arrowsSVG(S.arrows, flipIt);
+  const g = S.g, played = g.plies[S.pz.ply - 1], m = pzMoment(S.pz);
+  const side = g.colour === "white" ? "White" : "Black";
+  let s = `<p class="pz-prompt">${S.done ? "Solved" : S.step ? "Keep going" : `You're ${side}. Find the best move.`}</p>
+    <p class="pz-from">Puzzle ${PZ.indexOf(S.pz) + 1} · from your game vs ${esc(g.opponent)}, ${esc(g.date)}, move ${played.move_no}${S.done ? ` — you played <b>${esc(moveLabel(played))}</b>` : ""}</p>`;
+  if (S.msg) s += `<div class="verdict ${S.msg.cls}">${S.msg.html}</div>`;
+  if (S.hint && m && m.rule && !S.done) s += `<div class="claude"><div class="who">Hint</div><p class="rule">${mdInline(m.rule)}</p></div>`;
+  if (S.done && m) s += `<div class="claude"><div class="who">Claude</div><p>${mdInline(m.comment)}</p>${m.instead ? `<p><b>Instead:</b> ${mdInline(m.instead)}</p>` : ""}${m.rule ? `<p class="rule">Rule: ${mdInline(m.rule)}</p>` : ""}</div>`;
+  s += `<div class="pz-actions">${S.done
+    ? `<button class="primary" id="pz-go-next">Next puzzle ▶</button><button id="pz-retry">Try again</button><button id="pz-game">Open the game here</button>`
+    : `${m && m.rule ? `<button id="pz-hint">Hint</button>` : ""}<button id="pz-show">Show answer</button>`}</div>`;
+  const now = document.getElementById("pz-now");
+  now.innerHTML = s;
+  const on = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener("click", fn); };
+  on("pz-go-next", () => pzStep(1));
+  on("pz-retry", () => { PZS = null; renderPuzzles(S.pz.id); });
+  on("pz-game", () => go(S.pz.key, S.pz.ply - 1));
+  on("pz-hint", () => { S.hint = true; pzDraw(); });
+  on("pz-show", () => {
+    pzMiss();
+    const b = step.moves[step.best];
+    S.arrows = [{ uci: step.best, color: css("--best") }]; S.sel = null;
+    S.msg = { cls: "", html: `The move is <b>${esc(b.san)}</b>. Play it on the board to carry on.` };
+    pzDraw();
+  });
+}
+function pzMiss() {
+  if (PZS.missed) return;
+  PZS.missed = true; pzRec[PZS.pz.id] = "missed"; pzSave(); pzPicker();
+}
+function pzClick(sq) {
+  const S = PZS;
+  if (S.done || S.busy) return;
+  const step = S.pz.steps[S.step];
+  if (S.sel) {
+    const hits = Object.keys(step.moves).filter((u) => u.startsWith(S.sel + sq));
+    if (hits.length) return pzTry(hits.find((u) => u.length === 4 || u[4] === "q") || hits[0]);
+  }
+  S.sel = Object.keys(step.moves).some((u) => u.startsWith(sq)) && S.sel !== sq ? sq : null;
+  pzDraw();
+}
+function pzTry(uci) {
+  const S = PZS, step = S.pz.steps[S.step], mv = step.moves[uci], top = pzTop(step);
+  S.sel = null; S.arrows = [];
+  const mateLeft = (cp) => 10000 - cp;
+  let verdict;
+  if (top >= MATE) verdict = mv.cp === top ? "right" : mv.cp >= MATE ? "slow" : "wrong";
+  else {
+    const lost = winPct(top) - winPct(mv.cp);
+    verdict = uci === step.best || lost <= 3 ? "right" : lost <= 8 ? "close" : "wrong";
+  }
+  if (verdict !== "right") {
+    if (verdict === "wrong") pzMiss();
+    const html = {
+      slow: `<b>${esc(mv.san)}</b> still mates, but ${mateLeft(mv.cp) ? `takes ${mateLeft(mv.cp)} more move${mateLeft(mv.cp) > 1 ? "s" : ""}` : "slower"}. There's a faster way. Try again.`,
+      close: `<b>${esc(mv.san)}</b> is fine (${fmtEval(mv.cp)}), but there's a stronger move (${fmtEval(top)}). Try again.`,
+      wrong: top >= MATE
+        ? `Not <b>${esc(mv.san)}</b>: you'd be ${mv.cp >= MATE ? "mating slower" : fmtEval(mv.cp)}, but there's a forced mate in ${mateLeft(top) + 1}. Look at every check. Try again.`
+        : `Not <b>${esc(mv.san)}</b>: that leaves you at ${fmtEval(mv.cp)}, and the best move keeps ${fmtEval(top)}. Run the scan: what can you take, any checks? Try again.`,
+    }[verdict];
+    S.msg = { cls: verdict === "wrong" ? "bad" : "", html };
+    return pzDraw();
+  }
+  S.fen = mv.fen; S.hi = [uci.slice(0, 2), uci.slice(2, 4)];
+  const next = S.pz.steps[S.step + 1];
+  if (step.reply && next) {
+    S.busy = true;
+    S.msg = { cls: "good", html: `<b>${esc(mv.san)}</b> — correct.` };
+    pzDraw();
+    setTimeout(() => {
+      if (PZS !== S) return;
+      S.step++; S.fen = next.fen; S.hi = [step.reply.uci.slice(0, 2), step.reply.uci.slice(2, 4)]; S.busy = false;
+      S.msg = { cls: "good", html: `<b>${esc(mv.san)}</b> — correct. They answer <b>${esc(step.reply.san)}</b>. What now?` };
+      pzDraw();
+    }, 700);
+    return;
+  }
+  S.done = true;
+  if (!S.missed) { pzRec[S.pz.id] = "solved"; pzSave(); }
+  const mate = /#$/.test(mv.san);
+  S.msg = { cls: "good", html: `<b>${esc(mv.san)}</b> — ${mate ? "checkmate" : "correct"}.${S.missed ? " Marked as missed, so it comes back under <i>Missed</i>." : ""}` };
+  pzDraw(); pzPicker();
+}
+
+// ---------- drills: K+Q vs K and K+R vs K, solved in the page ----------
+// Three pieces is few enough to solve every position exactly (retrograde analysis, ~0.5M positions),
+// so the computer defends perfectly and the page knows the true distance to mate. No engine needed.
+// Squares are 0..63, a1 = 0, h8 = 63. Index = position with white king, black king, white piece, side to move.
+const KX = (() => {
+  const ROOK_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const DIAG_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const KING_DIRS = [...ROOK_DIRS, ...DIAG_DIRS];
+  const fr = (s) => [s & 7, s >> 3];
+  const adj = (a, b) => { const [af, ar] = fr(a), [bf, br] = fr(b); return a !== b && Math.abs(af - bf) <= 1 && Math.abs(ar - br) <= 1; };
+  const kingTo = (s) => KING_DIRS.map(([df, dr]) => { const [f, r] = fr(s); return f + df >= 0 && f + df < 8 && r + dr >= 0 && r + dr < 8 ? s + df + 8 * dr : -1; }).filter((t) => t >= 0);
+  const KING = Array.from({ length: 64 }, (_, s) => kingTo(s));
+  // squares the piece on p reaches, rays stopped by the blockers (the kings)
+  function slide(p, dirs, block1, block2) {
+    const out = [];
+    for (const [df, dr] of dirs) {
+      let [f, r] = fr(p);
+      for (;;) {
+        f += df; r += dr;
+        if (f < 0 || f > 7 || r < 0 || r > 7) break;
+        const t = f + 8 * r;
+        if (t === block1 || t === block2) { out.push(t); break; }
+        out.push(t);
+      }
+    }
+    return out;
+  }
+  const idx = (wk, bk, p, stm) => (((wk << 6 | bk) << 6 | p) << 1) | stm;
+  const N = 64 * 64 * 64 * 2;
+
+  function solve(piece) {
+    const dirs = piece === "q" ? KING_DIRS : ROOK_DIRS;
+    // does the piece on p attack square t, with the white king on wk in the way? (the black king never blocks: it is the target)
+    const att = new Uint8Array(64 * 64 * 64);
+    for (let p = 0; p < 64; p++) for (let wk = 0; wk < 64; wk++) for (const t of slide(p, dirs, wk, -1)) if (t !== wk) att[(p << 12) | (wk << 6) | t] = 1;
+    const hits = (p, t, wk) => att[(p << 12) | (wk << 6) | t] === 1;
+    // dtm: -1 unknown/draw. White to move: moves until mate. Black to move: white moves left until mate (0 = mated).
+    const dtm = new Int8Array(N).fill(-1);
+    const left = new Int8Array(N);            // black to move: legal replies not yet shown to lose
+    const queue = new Int32Array(N); let qh = 0, qt = 0;
+    const legalB = (wk, bk, p) => wk !== bk && wk !== p && bk !== p && !adj(wk, bk);
+    for (let wk = 0; wk < 64; wk++) for (let bk = 0; bk < 64; bk++) for (let p = 0; p < 64; p++) {
+      if (!legalB(wk, bk, p)) continue;
+      let n = 0, draw = false;
+      for (const t of KING[bk]) {
+        if (adj(t, wk) || t === wk) continue;
+        if (t === p) { draw = true; break; }      // takes the undefended piece: king against king
+        if (hits(p, t, wk)) continue;
+        n++;
+      }
+      if (draw) { left[idx(wk, bk, p, 1)] = -1; continue; }
+      left[idx(wk, bk, p, 1)] = n;
+      if (n === 0 && hits(p, bk, wk)) { dtm[idx(wk, bk, p, 1)] = 0; queue[qt++] = idx(wk, bk, p, 1); }
+    }
+    while (qh < qt) {
+      const b = queue[qh++], d = dtm[b];
+      const p = (b >> 1) & 63, bk = (b >> 7) & 63, wk = b >> 13;
+      // white moves that led here: the king or the piece came from somewhere
+      const prev = [];
+      for (const s of KING[wk]) if (s !== bk && s !== p && !adj(s, bk)) prev.push([s, p]);
+      for (const s of slide(p, dirs, wk, bk)) if (s !== wk && s !== bk) prev.push([wk, s]);
+      for (const [pwk, pp] of prev) {
+        if (hits(pp, bk, pwk)) continue;                 // white to move with black in check can't happen
+        const w = idx(pwk, bk, pp, 0);
+        if (dtm[w] >= 0) continue;
+        dtm[w] = d + 1;
+        // black moves that led to w: the black king came from a neighbouring square
+        for (const s of KING[bk]) {
+          if (s === pwk || s === pp || adj(s, pwk)) continue;
+          const pb = idx(pwk, s, pp, 1);
+          if (left[pb] <= 0) continue;
+          if (--left[pb] === 0) { dtm[pb] = d + 1; queue[qt++] = pb; }
+        }
+      }
+    }
+    return { dtm, hits, dirs };
+  }
+
+  const cache = {};
+  const table = (piece) => cache[piece] || (cache[piece] = solve(piece));
+  // legal white moves as [from, to, nextIndex]
+  function whiteMoves(piece, wk, bk, p) {
+    const T = table(piece), out = [];
+    for (const t of KING[wk]) if (t !== p && t !== bk && !adj(t, bk)) out.push([wk, t, idx(t, bk, p, 1)]);
+    for (const t of slide(p, T.dirs, wk, bk)) if (t !== wk && t !== bk) out.push([p, t, idx(wk, bk, t, 1)]);
+    return out;
+  }
+  // legal black moves as [to, nextIndex, takesPiece]
+  function blackMoves(piece, wk, bk, p) {
+    const T = table(piece), out = [];
+    for (const t of KING[bk]) {
+      if (t === wk || adj(t, wk)) continue;
+      if (t === p) { out.push([t, -1, true]); continue; }
+      if (T.hits(p, t, wk)) continue;
+      out.push([t, idx(wk, t, p, 0), false]);
+    }
+    return out;
+  }
+  return { table, idx, adj, whiteMoves, blackMoves, N };
+})();
+const DRILLS = {
+  q: {
+    name: "King + queen", short: "K+Q", piece: "Q", minStart: 8,
+    how: `<p><b>1. Make the box smaller.</b> Put your queen a knight's jump away from their king. That cuts it into a corner of the board, and every time it steps back, follow it with the same knight's-jump distance.</p>
+      <p><b>2. Bring your king.</b> Once their king is stuck on the edge, stop moving the queen and walk your king up until it is two squares in front of theirs.</p>
+      <p><b>3. Mate on the edge</b> with the queen, protected by your king.</p>
+      <p><b>Stalemate warning:</b> stalemate means their king is <i>not</i> in check but has no legal move. That's a draw. Before every queen move, check that their king still has a square, or that you're giving check.</p>`,
+  },
+  r: {
+    name: "King + rook", short: "K+R", piece: "R", minStart: 13,
+    how: `<p><b>1. Cut their king off.</b> Put your rook on a row or column that fences their king into one part of the board.</p>
+      <p><b>2. Walk your king towards theirs.</b> The rook alone can't mate; your king does half the work.</p>
+      <p><b>3. Take the opposition, then check.</b> The <b>opposition</b> means the two kings face each other on the same row or column with one square between them. When you have it and their king is on the edge, a rook check along that edge is mate, or pushes it one row closer.</p>
+      <p><b>4. No good move? Make a waiting move</b> with the rook along its row, far from their king, so they have to step into the opposition.</p>
+      <p>Keep the rook away from their king. If it isn't protected, they take it and it's a draw.</p>`,
+  },
+};
+const drRec = (() => { try { return JSON.parse(localStorage.getItem("chess-drills") || "{}"); } catch (e) { return {}; } })();
+const drSave = () => { try { localStorage.setItem("chess-drills", JSON.stringify(drRec)); } catch (e) { /* private mode: records won't persist */ } };
+let drShowDist = false;
+try { drShowDist = localStorage.getItem("chess-drills-dist") === "1"; } catch (e) { drShowDist = false; }
+let DR = null, drTimer = null;
+const sqName = (s) => "abcdefgh"[s & 7] + ((s >> 3) + 1);
+function drFen(wk, bk, p, piece) {
+  const g = Array.from({ length: 8 }, () => Array(8).fill("."));
+  const put = (s, c) => { g[7 - (s >> 3)][s & 7] = c; };
+  put(wk, "K"); put(bk, "k"); put(p, piece);
+  return g.map((r) => r.join("").replace(/\.+/g, (m) => m.length)).join("/") + " w - - 0 1";
+}
+function drNewStart(kind) {
+  const T = KX.table(kind);
+  for (;;) {
+    const i = Math.floor(Math.random() * KX.N / 2) * 2;
+    if (T.dtm[i] < DRILLS[kind].minStart) continue;
+    const p = (i >> 1) & 63, bk = (i >> 7) & 63, wk = i >> 13;
+    if (KX.adj(p, bk)) continue;
+    return { wk, bk, p };
+  }
+}
+function renderDrills(kind) {
+  kind = DRILLS[kind] ? kind : "q";
+  history.replaceState(null, "", `#/drills/${kind}`);
+  app.innerHTML = `
+    <div class="game">
+      <div>
+        <div class="board-wrap"><div class="board" id="board"></div><div id="arrows"></div></div>
+        <div class="controls"><button id="dr-new" title="A new random position">New position</button><button id="dr-again" title="Start this position again">Same position again</button></div>
+        <div class="keys">Click a piece, then the square to move it to. The computer defends perfectly.</div>
+      </div>
+      <div class="stack">
+        <div class="card now" id="dr-now"><p class="empty">Solving every ${esc(DRILLS[kind].name)} position…</p></div>
+        <div class="card md" id="dr-how"></div>
+      </div>
+    </div>`;
+  document.getElementById("board").addEventListener("click", (ev) => { const sq = ev.target.closest("[data-sq]"); if (sq) drClick("abcdefgh".indexOf(sq.dataset.sq[0]) + 8 * (+sq.dataset.sq[1] - 1)); });
+  document.getElementById("dr-new").addEventListener("click", () => drStart(kind, drNewStart(kind)));
+  document.getElementById("dr-again").addEventListener("click", () => DR && drStart(kind, DR.start));
+  // let the "solving" message paint before the (sub-second) solve
+  setTimeout(() => { if (location.hash.startsWith(`#/drills/${kind}`)) drStart(kind, drNewStart(kind)); }, 30);
+}
+function drStart(kind, start) {
+  const T = KX.table(kind);
+  DR = { kind, start, ...start, sel: null, hi: [], moves: 0, t0: null, t1: null, busy: false, over: null,
+    best: T.dtm[KX.idx(start.wk, start.bk, start.p, 0)] };
+  clearInterval(drTimer);
+  drTimer = setInterval(() => {
+    const el = document.getElementById("dr-clock");
+    if (!el || !DR) { clearInterval(drTimer); return; }
+    el.textContent = drTime();
+  }, 250);
+  drHow();
+  drDraw();
+}
+const drSecs = () => !DR.t0 ? 0 : ((DR.t1 || Date.now()) - DR.t0) / 1000;
+const drTime = () => { const s = drSecs(); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };
+function drHow() {
+  const d = DRILLS[DR.kind];
+  document.getElementById("dr-how").innerHTML = `<h2>How to mate with ${esc(d.name.toLowerCase())}</h2>${d.how}`;
+}
+function drTargets(from) {
+  return KX.whiteMoves(DR.kind, DR.wk, DR.bk, DR.p).filter((m) => m[0] === from).map((m) => m[1]);
+}
+function drDraw() {
+  const S = DR, d = DRILLS[S.kind], T = KX.table(S.kind);
+  const targets = S.sel != null ? drTargets(S.sel).map(sqName) : [];
+  document.getElementById("board").innerHTML = boardHTML(drFen(S.wk, S.bk, S.p, d.piece), false, S.hi,
+    S.over ? null : { sel: S.sel != null ? sqName(S.sel) : null, targets });
+  const rec = drRec[S.kind] || {};
+  const left = T.dtm[KX.idx(S.wk, S.bk, S.p, 0)];
+  let s = `<div class="chips">${Object.entries(DRILLS).map(([k, x]) => `<button data-k="${k}" class="${k === S.kind ? "on" : ""}">${x.name}</button>`).join("")}</div>
+    <p class="pz-prompt">${S.over ? (S.over.ok ? "Checkmate" : "Draw") : "You're White. Checkmate their king."}</p>
+    <dl>
+      <dt>Time</dt><dd><b id="dr-clock" style="font-size:20px;font-variant-numeric:tabular-nums">${drTime()}</b> <span style="color:var(--muted)">goal: under 1:00</span></dd>
+      <dt>Your moves</dt><dd>${S.moves}${S.over ? ` · fastest possible from the start: ${S.best}` : ""}</dd>
+      ${drShowDist && !S.over ? `<dt>With best play</dt><dd>mate in ${left}</dd>` : ""}
+    </dl>`;
+  if (S.over) s += `<div class="verdict ${S.over.ok ? "good" : "bad"}">${S.over.html}</div>`;
+  s += `<div class="pz-actions">${S.over ? `<button class="primary" id="dr-next">New position ▶</button>` : ""}
+      <label style="display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--ink-2)"><input type="checkbox" id="dr-dist"${drShowDist ? " checked" : ""}> Show moves left to mate</label></div>
+    <p class="pz-from" style="margin-top:10px">${rec.mates ? `Your record: ${rec.mates} mate${rec.mates > 1 ? "s" : ""}, ${rec.under || 0} under a minute · best ${fmtClock(rec.bestSecs)}` : "No mates yet with this piece."}</p>`;
+  const now = document.getElementById("dr-now");
+  now.innerHTML = s;
+  now.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => { location.hash = `#/drills/${b.dataset.k}`; }));
+  const nx = document.getElementById("dr-next");
+  if (nx) nx.addEventListener("click", () => drStart(S.kind, drNewStart(S.kind)));
+  document.getElementById("dr-dist").addEventListener("change", (ev) => {
+    drShowDist = ev.target.checked;
+    try { localStorage.setItem("chess-drills-dist", drShowDist ? "1" : "0"); } catch (e) { /* fine */ }
+    drDraw();
+  });
+}
+function drClick(sq) {
+  const S = DR;
+  if (!S || S.over || S.busy) return;
+  if (S.sel != null && drTargets(S.sel).includes(sq)) return drMove(S.sel, sq);
+  S.sel = (sq === S.wk || sq === S.p) && S.sel !== sq ? sq : null;
+  drDraw();
+}
+function drMove(from, to) {
+  const S = DR, T = KX.table(S.kind), d = DRILLS[S.kind];
+  if (!S.t0) S.t0 = Date.now();
+  if (from === S.wk) S.wk = to; else S.p = to;
+  S.moves++; S.sel = null; S.hi = [sqName(from), sqName(to)];
+  const replies = KX.blackMoves(S.kind, S.wk, S.bk, S.p);
+  const finish = (ok, html) => {
+    S.t1 = Date.now(); S.over = { ok, html };
+    if (ok) {
+      const r = drRec[S.kind] || (drRec[S.kind] = { mates: 0, under: 0 });
+      const secs = drSecs();
+      r.mates++; if (secs < 60) r.under = (r.under || 0) + 1;
+      if (r.bestSecs == null || secs < r.bestSecs) r.bestSecs = Math.round(secs);
+      drSave();
+    }
+    drDraw();
+  };
+  if (!replies.length) {
+    if (T.hits(S.p, S.bk, S.wk)) {
+      const secs = drSecs(), extra = S.moves - S.best;
+      return finish(true, `Mate in ${S.moves} moves and ${drTime()}. ${secs < 60 ? "<b>Under a minute.</b>" : "Over a minute: do it again."} ${extra > 0 ? `Perfect play needed ${S.best}, so ${extra} move${extra > 1 ? "s were" : " was"} spare.` : "That's the fastest possible mate."}`);
+    }
+    return finish(false, `<b>Stalemate.</b> Their king on ${sqName(S.bk)} isn't in check but has no legal move, so it's a draw. Before each move, check that their king still has a square to go to, or that you're giving check.`);
+  }
+  const take = replies.find((m) => m[2]);
+  S.busy = true; drDraw();
+  setTimeout(() => {
+    if (DR !== S) return;
+    S.busy = false;
+    if (take) {
+      const from = S.bk; S.bk = S.p; S.hi = [sqName(from), sqName(S.bk)];
+      return finish(false, `They took your ${d.piece === "Q" ? "queen" : "rook"} on ${sqName(S.bk)}: it wasn't protected by your king. King against king is a draw. Ask <i>what can they take?</i> before every move.`);
+    }
+    // the longest defence; ties broken at random so the same position plays differently
+    const worst = Math.max(...replies.map((m) => T.dtm[m[1]]));
+    const pick = replies.filter((m) => T.dtm[m[1]] === worst);
+    const [to] = pick[Math.floor(Math.random() * pick.length)];
+    S.hi = [sqName(S.bk), sqName(to)]; S.bk = to;
+    drDraw();
+  }, 300);
+}
+
 // ---------- routing + theme ----------
 function go(key, ply) { location.hash = `#/game/${encodeURIComponent(key)}/${ply ?? 0}`; }
 function route() {
@@ -830,6 +1278,14 @@ function route() {
   document.getElementById("nav-overview").classList.toggle("on", h === "#/" || h === "#");
   document.getElementById("nav-games").classList.toggle("on", h.startsWith("#/games") || !!m);
   document.getElementById("nav-repertoire").classList.toggle("on", h.startsWith("#/repertoire"));
+  document.getElementById("nav-puzzles").classList.toggle("on", h.startsWith("#/puzzles"));
+  document.getElementById("nav-drills").classList.toggle("on", h.startsWith("#/drills"));
+  const dm = h.match(/^#\/drills(?:\/(\w+))?/);
+  if (!dm) { DR = null; clearInterval(drTimer); }
+  else { G = null; PZS = null; if (!DR || DR.kind !== dm[1]) renderDrills(dm[1]); return; }
+  const pm = h.match(/^#\/puzzles(?:\/([^/]+))?/);
+  if (pm) { G = null; if (!PZS || PZS.pz.id !== decodeURIComponent(pm[1] || "")) renderPuzzles(pm[1] && decodeURIComponent(pm[1])); return; }
+  PZS = null;
   if (m) { if (!G || G.key !== decodeURIComponent(m[1])) renderGame(decodeURIComponent(m[1]), +(m[2] || 0)); else setPly(+(m[2] || 0)); }
   else { G = null; if (h.startsWith("#/games")) renderGames(); else if (h.startsWith("#/repertoire")) renderRepertoire(); else renderOverview(); }
   window.scrollTo(0, 0);

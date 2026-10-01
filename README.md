@@ -29,6 +29,14 @@ saves is checked against the actual game before the dashboard shows it.
 - **Game view.** Board with the best move and the refutation drawn as arrows, a
   winning-chances graph with your mistakes marked, time spent per move, and the coach's
   comment on the moves that mattered. ← → to step, ↑ ↓ to jump between mistakes.
+- **Puzzles.** Every moment from the reviews where you missed the engine's move, as a
+  position to solve: click a piece, click a square, and it's graded on the spot (Stockfish
+  scored every legal move at build time). Forced mates are played out move by move; the
+  hint is the review's rule, and progress (solved / missed) is kept in your browser.
+- **Drills.** King + queen and king + rook against a lone king, from random positions.
+  Every position is solved exactly in the page (no engine, under a second), so the computer
+  defends perfectly and the result says how many moves the fastest mate needed. Timed
+  against the one-minute goal; stalemate and an unprotected piece end it as a draw.
 - **Repertoire.** A six-move opening plan with board diagrams, linked to the moments in
   your own games where it applied.
 - No server, no libraries, no network: it's one HTML file you open from Finder or

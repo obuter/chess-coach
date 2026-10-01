@@ -85,8 +85,8 @@ Tell them where they are (from `STATE.md`) and what is next. Do not skip ahead.
 
 - *"What did I do wrong?"* / *"Analyse my latest game"* — run `build.py --fetch`, then `analyze.py` on the newest month's file with `--last 1`, and give the report above. *"Review my last N games"* → `--last N`, one report each.
 - *"Am I improving?"* — this is the one time you read all of `PROGRESS.md`. Compare tag counts over time, not ratings. Ratings move too slowly and too randomly at beginner level to mean anything over five games.
-- *"Quiz me"* — take FENs from `PROGRESS.md` or re-run the script on an old game, and give them positions from **their own games** as puzzles. Give the position, ask for the move, wait for an answer, then confirm against the engine before saying whether they were right.
-- *"What should I practise?"* — read the drill in `STATE.md`. Do not invent a new one unless it is stale.
+- *"Quiz me"* — the **Puzzles** tab in `chess.html` already does this on a board, from every review moment (built by `build.py`, cached in `cache/puzzles/`); point them there first. In chat: take FENs from `PROGRESS.md` or re-run the script on an old game, and give them positions from **their own games** as puzzles. Give the position, ask for the move, wait for an answer, then confirm against the engine before saying whether they were right.
+- *"What should I practise?"* — read the drill in `STATE.md`. Do not invent a new one unless it is stale. For K+Q vs K and K+R vs K, the **Drills** tab in `chess.html` plays them against perfect defence with a timer; send them there rather than to an external site.
 - *"Explain X"* — one sentence of definition, then an example from one of their own games if one exists.
 
 ## Session close
