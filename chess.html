@@ -441,8 +441,19 @@ function tile(label, value, delta, goodWhenUp) {
 // ---------- per-game facts used by the overview ----------
 const bestWin = (g) => Math.max(...g.plies.map((p) => p.win));
 const wasWinning = (g) => bestWin(g) >= 90;           // +6 or better at some point
-const lostOnTime = (g) => g.outcome === "loss" && /on time/.test(g.termination);
-const tcName = (tc) => ({ "600": "10|0", "900+10": "15|10", "600+5": "10|5", "1200": "20|0" }[tc] || tc);
+const ENDINGS = [["checkmate", "Checkmate"], ["resignation", "Resignation"], ["stalemate", "Stalemate"], ["abandoned", "Abandoned"],
+  ["on time", "On time"], ["repetition", "Repetition"], ["insufficient", "Insufficient material"], ["agreement", "Agreed"]];
+// Consecutive blocks of `size` real games, labelled with game numbers as the charts count them.
+function blocks(gs, size) {
+  const out = [];
+  for (let i = 0; i < gs.length; i += size) {
+    const b = gs.slice(i, i + size), a = games.indexOf(b[0]) + 1, z = games.indexOf(b[b.length - 1]) + 1;
+    out.push({ label: `${a}–${z}`, dates: b[0].date === b[b.length - 1].date ? b[0].date.slice(5) : `${b[0].date.slice(5)} → ${b[b.length - 1].date.slice(5)}`, games: b });
+  }
+  return out;
+}
+const peakPly = (g) => g.plies.reduce((a, p) => p.win > a.win ? p : a, g.plies[0]);
+const ending = (g) => (ENDINGS.find(([k]) => g.termination.includes(k)) || [, "Other"])[1];
 function evalAt10(g) {
   const p = g.plies.find((p) => p.move_no === 10 && myPly(g, p));
   return p ? povCp(g, p.cp) / 100 : null;
@@ -468,8 +479,8 @@ function renderOverview() {
   const rated = elos.filter((e) => e != null);
   const notes = games.reduce((a, g) => a + annotations(g), 0), reviewed = games.filter((g) => g.review).length;
   const winning = real.filter(wasWinning), converted = winning.filter((g) => g.outcome === "win");
-  const timeLosses = real.filter(lostOnTime);
-  const tlByTc = {}; timeLosses.forEach((g) => { tlByTc[tcName(g.time_control)] = (tlByTc[tcName(g.time_control)] || 0) + 1; });
+  const draws = real.filter((g) => g.outcome === "draw"), drawsFromWinning = draws.filter(wasWinning);
+  const stalemates = draws.filter((g) => ending(g) === "Stalemate").length;
   const xTicks = games.map((g, i) => ({ i, label: String(i + 1) })).filter((t, i) => n <= 20 || i % 5 === 0);
   const vlines = (D.milestones || []).map((m) => ({ i: games.findIndex((g) => g.key === m.after), label: m.short || "" })).filter((m) => m.i >= 0);
   const gameTip = (i, extra) => { const g = games[i]; return `<b>${i + 1}. vs ${esc(g.opponent)}</b> <span class="m">${esc(shortDate(g))}</span><br>${extra}`; };
@@ -481,11 +492,11 @@ function renderOverview() {
       ${tile("Record", wdl(real), { text: "wins – draws – losses" })}
       ${tile("Rating", eloLast ?? "–", { text: rated.length ? `started at ${eloFirst} · range ${Math.min(...rated)}–${Math.max(...rated)}` : "no ratings in the PGN headers" })}
       ${tile("Winning positions won", `${converted.length} of ${winning.length}`, { text: "games where you reached +6 or better" })}
-      ${tile("Lost on time", timeLosses.length, { text: Object.entries(tlByTc).map(([k, v]) => `${v} at ${k}`).join(" · ") || "none" })}
+      ${tile("Draws from winning", `${drawsFromWinning.length} of ${draws.length}`, { text: `draws where you had been +6 or better · ${stalemates} stalemate${stalemates === 1 ? "" : "s"}` })}
       ${tile("Moves Claude annotated", notes, { text: `across ${reviewed} games` })}
     </div>
-    <div class="card" style="margin-bottom:16px"><h2>From the beginning, day by day</h2>
-      <p class="sub">Games under 5 moves are left out. “Won from winning” counts games where you reached +6 or better.</p>
+    <div class="card" style="margin-bottom:16px"><h2>From the beginning, 10 games at a time</h2>
+      <p class="sub">Numbered as on the charts. Games under 5 moves are left out. “Won from winning” counts games where you reached +6 or better.</p>
       <div style="overflow-x:auto" id="journey"></div></div>
     <div class="grid2">
       <div class="stack">
@@ -493,41 +504,46 @@ function renderOverview() {
         <div class="card"><h2>Accuracy</h2><p class="sub">Per game (dots) and the ${K}-game average (line). Lichess formula, from win% lost per move.</p><div class="chart" id="c-acc"></div></div>
         <div class="card"><h2>Mistakes and blunders per game</h2><p class="sub">A blunder costs 20%+ of your winning chances in one move; a mistake 10–20%.</p><div class="chart" id="c-err"></div>
           <div class="legend"><span><i style="background:var(--blunder)"></i>Blunder</span><span><i style="background:var(--mistake)"></i>Mistake</span></div></div>
+        <div class="card"><h2>How good it got, and how it ended</h2><p class="sub">Games grouped by the best position you reached, and what you made of it. Anything from +6 up should be a win.</p><div id="peaks"></div>
+          <div class="legend"><span><i style="background:var(--good-text)"></i>Won</span><span><i style="background:var(--muted)"></i>Draw</span><span><i style="background:var(--bad-text)"></i>Lost</span></div></div>
         <div class="card"><h2>Openings</h2><p class="sub">Median evaluation after your 10th move, from your side. Above zero means the opening went your way.</p><div id="openings"></div></div>
       </div>
       <div class="stack">
-        <div class="card"><h2>Is the coaching working?</h2><p class="sub">Share of games each weakness showed up in, per day and over your last 10 games. Tags come from Claude's reviews. Lighter means it happened less.</p><div id="heat" style="overflow-x:auto"></div></div>
-        <div class="card"><h2>Time control</h2><p class="sub">Where the clock losses come from.</p><div id="tcs"></div></div>
+        <div class="card"><h2>Is the coaching working?</h2><p class="sub">Share of games each weakness showed up in, per 20 games and over your last 10. Tags come from Claude's reviews. Lighter means it happened less.</p><div id="heat" style="overflow-x:auto"></div></div>
+        <div class="card"><h2>How games end</h2><p class="sub">${drawsFromWinning.length === draws.length && draws.length ? "Every draw so far came from a position where you were +6 or better — half a point given away each time." : "Draws and losses are where points leak."}</p><div id="endings"></div></div>
         <div class="card md">${mdBlock(D.state_md || "_No STATE.md_")}</div>
         ${(D.milestones || []).length ? `<div class="card"><h2>Coaching timeline</h2><p class="sub">Changes that came out of the reviews.</p><ul class="milestones">${D.milestones.map((m) => `<li><b>${esc(m.date)}</b> — ${mdInline(m.label)}</li>`).join("")}</ul></div>` : ""}
       </div>
     </div>`;
 
-  // day-by-day table
-  const days = [...new Set(real.map((g) => g.date))];
-  const row = (label, gs, first) => {
+  // table in blocks of 10 games
+  const row = (label, gs, first, dates) => {
     const w = gs.filter(wasWinning), el = gs.map((g) => g.my_elo).filter((e) => e != null);
-    return `<tr${first ? "" : ' style="font-weight:600"'}><td>${esc(label)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td>
+    return `<tr${first ? "" : ' style="font-weight:600"'}><td>${esc(label)}${dates ? ` <span style="color:var(--muted)">${esc(dates)}</span>` : ""}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td>
       <td class="num">${el.length ? `${el[0]} → ${el[el.length - 1]}` : "–"}</td>
       <td class="num">${mean(gs.map((g) => g.accuracy))?.toFixed(0) ?? "–"}%</td>
       <td class="num">${mean(gs.map(blunders))?.toFixed(1) ?? "–"}</td>
       <td class="num">${w.filter((g) => g.outcome === "win").length} of ${w.length}</td>
-      <td class="num">${gs.filter(lostOnTime).length}</td>
-      <td class="hide-sm">${[...new Set(gs.map((g) => tcName(g.time_control)))].join(", ")}</td></tr>`;
+</tr>`;
   };
-  document.getElementById("journey").innerHTML = `<table class="list"><thead><tr><th>Day</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Rating</th><th class="num">Accuracy</th><th class="num">Blunders / game</th><th class="num">Won from winning</th><th class="num">Lost on time</th><th class="hide-sm">Time controls</th></tr></thead>
-    <tbody>${days.map((d) => row(d, real.filter((g) => g.date === d), true)).join("")}${real.length > 10 ? row("Last 10 games", real.slice(-10), true) : ""}${row("All games", real, false)}</tbody></table>`;
+  document.getElementById("journey").innerHTML = `<table class="list"><thead><tr><th>Game #</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Rating</th><th class="num">Accuracy</th><th class="num">Blunders / game</th><th class="num">Won from winning</th></tr></thead>
+    <tbody>${blocks(real, 10).map((b) => row(b.label, b.games, true, b.dates)).join("")}${real.length > 10 ? row("Last 10 games", real.slice(-10), true) : ""}${row("All games", real, false)}</tbody></table>`;
 
   // openings
   const groups = {}; real.forEach((g) => { (groups[openingGroup(g)] = groups[openingGroup(g)] || []).push(g); });
   document.getElementById("openings").innerHTML = `<table class="list"><thead><tr><th>Opening</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Move 10</th></tr></thead><tbody>
     ${Object.entries(groups).sort((a, b) => b[1].length - a[1].length).map(([k, gs]) => { const m = median(gs.map(evalAt10));
-      return `<tr><td>${esc(k)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td><td class="num" style="color:${m == null ? "var(--muted)" : m >= 0 ? "var(--good-text)" : "var(--bad-text)"}">${signed(m)}</td></tr>`; }).join("")}</tbody></table>`;
+      return `<tr><td>${esc(k)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td><td class="num" style="color:${m == null ? "var(--muted)" : m >= 0 ? "var(--good-text)" : "var(--bad-text)"}">${signed(m)}</td></tr>`; }).join("")}</tbody></table>
+    ${Object.entries(groups).filter(([, gs]) => median(gs.map(evalAt10)) < 0).map(([k, gs]) => `<p class="sub" style="margin-top:10px"><b style="color:var(--bad-text)">${esc(k)}</b> goes wrong by move 10 — open each at your 10th move: ${gs.map((g) => {
+      const p = g.plies.find((p) => p.move_no === 10 && myPly(g, p)), e = evalAt10(g);
+      return `<a href="#/game/${encodeURIComponent(g.key)}/${p ? p.ply : 0}">${esc(g.opponent)}</a> <span style="color:${e == null ? "var(--muted)" : e >= 0 ? "var(--good-text)" : "var(--bad-text)"}">${signed(e)}</span>`; }).join(" · ")}</p>`).join("")}`;
 
-  // time controls
-  const tcs = {}; real.forEach((g) => { (tcs[tcName(g.time_control)] = tcs[tcName(g.time_control)] || []).push(g); });
-  document.getElementById("tcs").innerHTML = `<table class="list"><thead><tr><th>Time control</th><th class="num">Games</th><th class="num">W–D–L</th><th class="num">Lost on time</th></tr></thead><tbody>
-    ${Object.entries(tcs).sort((a, b) => b[1].length - a[1].length).map(([k, gs]) => `<tr><td>${esc(k)}</td><td class="num">${gs.length}</td><td class="num">${wdl(gs)}</td><td class="num">${gs.filter(lostOnTime).length}</td></tr>`).join("")}</tbody></table>`;
+  // how games end
+  const ends = {}; real.forEach((g) => { (ends[ending(g)] = ends[ending(g)] || []).push(g); });
+  const last10 = new Set(real.slice(-10));
+  const by = (gs, o) => gs.filter((g) => g.outcome === o).length || "·";
+  document.getElementById("endings").innerHTML = `<table class="list"><thead><tr><th>Ending</th><th class="num">You won</th><th class="num">Draw</th><th class="num">You lost</th><th class="num">Last 10</th></tr></thead><tbody>
+    ${Object.entries(ends).sort((a, b) => b[1].length - a[1].length).map(([k, gs]) => `<tr><td>${esc(k)}</td><td class="num">${by(gs, "win")}</td><td class="num">${by(gs, "draw")}</td><td class="num">${by(gs, "loss")}</td><td class="num">${gs.filter((g) => last10.has(g)).length || "·"}</td></tr>`).join("")}</tbody></table>`;
 
   const eMin = Math.floor((Math.min(...rated) - 20) / 50) * 50;
   const eMax = Math.ceil((Math.max(...rated) + 20) / 50) * 50;
@@ -555,19 +571,31 @@ function renderOverview() {
     tip: (i) => gameTip(i, `${games[i].counts.blunder} blunders · ${games[i].counts.mistake} mistakes · ${games[i].counts.inaccuracy} inaccuracies`),
     click: (i) => go(games[i].key),
   });
+  // best position reached vs result
+  const PEAKS = [[9000, "Forced mate on the board"], [1000, "+10 or better"], [600, "+6 to +10"], [300, "+3 to +6"], [-Infinity, "Never above +3"]];
+  const peakBand = (g) => PEAKS.find(([cp]) => povCp(g, peakPly(g).cp) >= cp)[1];
+  const seg = (k, of, v) => k ? `<span style="flex:${k};background:var(${v})" title="${k} of ${of}"></span>` : "";
+  document.getElementById("peaks").innerHTML = `<table class="list"><thead><tr><th>Best position</th><th class="num">Games</th><th class="num">W–D–L</th><th style="width:38%"></th></tr></thead><tbody>
+    ${PEAKS.map(([, label]) => { const gs = real.filter((g) => peakBand(g) === label); if (!gs.length) return "";
+      const [w, d, l] = ["win", "draw", "loss"].map((o) => gs.filter((g) => g.outcome === o).length);
+      return `<tr><td>${esc(label)}</td><td class="num">${gs.length}</td><td class="num">${w}–${d}–${l}</td>
+        <td><div style="display:flex;gap:2px;height:12px;border-radius:3px;overflow:hidden">${seg(w, gs.length, "--good-text")}${seg(d, gs.length, "--muted")}${seg(l, gs.length, "--bad-text")}</div></td></tr>`; }).join("")}</tbody></table>`;
   renderHeat(document.getElementById("heat"));
 }
 
 function renderHeat(host) {
   const rev = real.filter((g) => g.review);
   if (!rev.length) { host.innerHTML = `<p class="empty">No reviews yet — Claude writes them to <code>reviews/</code> at session close.</p>`; return; }
-  // one column per day, plus the last 10 games
-  const cols = [...new Set(rev.map((g) => g.date))].map((d) => ({ label: d.slice(5), games: rev.filter((g) => g.date === d) }));
+  // one column per 20 games, plus the last 10
+  const cols = blocks(rev, 20).map((b) => ({ label: "Games " + b.label, games: b.games }));
   if (rev.length > 10) cols.push({ label: "Last 10", games: rev.slice(-10) });
   const skip = new Set(["clean-game", "tactic-found", "opening-fine"]);
   const totals = {};
   rev.forEach((g) => g.review.tags.forEach((t) => { if (!skip.has(t)) totals[t] = (totals[t] || 0) + 1; }));
-  const tags = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+  // A weakness seen in at most 1 of the last 10 reviewed games is retired from the table.
+  const recent = rev.slice(-10), seen = (t) => recent.filter((g) => g.review.tags.includes(t)).length;
+  const retired = rev.length > 10 ? Object.keys(totals).filter((t) => seen(t) <= 1).sort((a, b) => totals[b] - totals[a]) : [];
+  const tags = Object.keys(totals).filter((t) => !retired.includes(t)).sort((a, b) => totals[b] - totals[a]);
   const ramp = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map(css);
   const cell = (hits, of) => {
     if (!hits) return `<td style="color:var(--muted)" title="0 of ${of} games">·</td>`;
@@ -576,7 +604,8 @@ function renderHeat(host) {
   };
   host.innerHTML = `<table class="heat"><tr><th></th>${cols.map((c) => `<th>${esc(c.label)}<br><span style="font-weight:400">${c.games.length} games</span></th>`).join("")}</tr>
     ${tags.map((t) => `<tr><th class="tag">${esc(t)}</th>${cols.map((c) => cell(c.games.filter((g) => g.review.tags.includes(t)).length, c.games.length)).join("")}</tr>`).join("")}
-    <tr><th class="tag" style="color:var(--good-text)">clean-game ✓</th>${cols.map((c) => { const k = c.games.filter((g) => g.review.tags.includes("clean-game")).length; return `<td title="${k} of ${c.games.length} games">${k ? Math.round(100 * k / c.games.length) + "%" : "·"}</td>`; }).join("")}</tr></table>`;
+    <tr><th class="tag" style="color:var(--good-text)">clean-game ✓</th>${cols.map((c) => { const k = c.games.filter((g) => g.review.tags.includes("clean-game")).length; return `<td title="${k} of ${c.games.length} games">${k ? Math.round(100 * k / c.games.length) + "%" : "·"}</td>`; }).join("")}</tr></table>
+    ${retired.length ? `<p class="sub" style="margin-top:10px">Retired — seen in at most 1 of your last 10 games: ${retired.map((t) => `${esc(t)} <span style="color:var(--muted)">(${seen(t)} of 10 lately, ${totals[t]} in all)</span>`).join(" · ")}</p>` : ""}`;
 }
 
 // ---------- games list ----------
