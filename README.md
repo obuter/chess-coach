@@ -39,8 +39,14 @@ saves is checked against the actual game before the dashboard shows it.
   against the one-minute goal; stalemate and an unprotected piece end it as a draw.
 - **Repertoire.** A six-move opening plan with board diagrams, linked to the moments in
   your own games where it applied.
+- **Sandbox.** A free board with Stockfish thinking live. Set up any position (piece
+  palette or FEN), or open one from a game move (**Sandbox** button, or `S`) or a puzzle.
+  Play moves for either side; the best lines, an eval bar and the best-move arrow update
+  while the engine thinks, and every move you play is graded the way the reviews are.
+  Needs `.venv/bin/python sandbox.py` running in a Terminal window.
 - No server, no libraries, no network: it's one HTML file you open from Finder or
-  Explorer. Light and dark mode; works on a phone screen.
+  Explorer. The Sandbox is the one exception, and it only talks to `sandbox.py` on your
+  own machine. Light and dark mode; works on a phone screen.
 
 ## Setup
 
@@ -98,6 +104,7 @@ To update the dashboard by hand: `.venv/bin/python build.py --fetch`.
 | `analyze.py` | Stockfish report for one PGN — what the coach reads |
 | `build.py` | Builds `data.js` for the dashboard; validates saved reviews against the games |
 | `chess.html` | The dashboard |
+| `sandbox.py` | Local helper for the Sandbox tab: live Stockfish and legal moves on 127.0.0.1:8765 |
 | `templates/` | Starter files for your personal notes |
 
 Everything personal — your games, the coach's notes about you, the cache and the built

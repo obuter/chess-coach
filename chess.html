@@ -7,7 +7,8 @@
 <!--
   Chess Review — a personal, offline game-review dashboard.
   Data comes from data.js, written by `.venv/bin/python build.py` (Stockfish evals + Claude's reviews).
-  No libraries, no network: open this file straight from Finder.
+  No libraries, no network: open this file straight from Finder. The one exception is the Sandbox
+  tab, which talks to sandbox.py on 127.0.0.1 for live Stockfish analysis.
 -->
 <style>
 :root {
@@ -255,6 +256,30 @@ table.list tr.row:hover td { background: var(--surface-2); }
 .pz-grid button.missed { background: var(--blunder); border-color: var(--blunder); color: #fff; }
 .pz-grid button.cur { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* sandbox */
+#sb > .stack { min-width: 0; }   /* long engine lines are cut with an ellipsis instead of squeezing the board */
+.sb-wrap { display: flex; gap: 8px; align-items: flex-start; }
+.sb-wrap .board-wrap { flex: 1; min-width: 0; }
+.evalbar { align-self: stretch; position: relative; width: 14px; flex: none; border-radius: 4px; overflow: hidden; background: #403f3b; border: 1px solid var(--border); }
+.evalbar div { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: #f4f3ef; transition: height .35s ease; }
+.evalbar.flip div { top: 0; bottom: auto; }
+.sb-line { display: flex; gap: 10px; align-items: baseline; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; font-size: 14px; font-variant-numeric: tabular-nums; }
+.sb-line:hover { background: var(--surface-2); }
+.sb-line.wait { cursor: default; color: var(--muted); }
+.sb-line.wait:hover { background: none; }
+.sb-line .ev { min-width: 50px; font-weight: 650; flex: none; }
+.sb-line span { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glyph { font: 26px/1 "Apple Symbols", "Segoe UI Symbol", "DejaVu Sans", serif; }
+.palette { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 10px 0 12px; }
+.palette button { border: 1px solid var(--border); border-radius: 8px; padding: 6px 0; cursor: pointer; }
+.palette button, #sb-tools button[data-act="promo"] { background: var(--sq-light); color: #52514e; }   /* a board square, so both colours read */
+.palette button.on { outline: 3px solid var(--accent); outline-offset: 1px; }
+.fen-row { display: flex; gap: 6px; margin-top: 12px; }
+.fen-row input { flex: 1; min-width: 0; font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.fen-row button { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.i-none { background: transparent; box-shadow: inset 0 0 0 1px var(--axis); }
+code.cmd { display: block; padding: 8px 10px; margin: 8px 0; font-size: 13px; }
+
 @media (max-width: 900px) {
   .grid2, .game { grid-template-columns: 1fr; }
   main { padding: 16px; }
@@ -267,7 +292,7 @@ table.list tr.row:hover td { background: var(--surface-2); }
 <body>
 <header class="top">
   <h1>Chess Review <span id="who"></span></h1>
-  <nav><a href="#/" id="nav-overview">Overview</a><a href="#/games" id="nav-games">Games</a><a href="#/repertoire" id="nav-repertoire">Repertoire</a><a href="#/puzzles" id="nav-puzzles">Puzzles</a><a href="#/drills" id="nav-drills">Drills</a></nav>
+  <nav><a href="#/" id="nav-overview">Overview</a><a href="#/games" id="nav-games">Games</a><a href="#/repertoire" id="nav-repertoire">Repertoire</a><a href="#/puzzles" id="nav-puzzles">Puzzles</a><a href="#/drills" id="nav-drills">Drills</a><a href="#/sandbox" id="nav-sandbox">Sandbox</a></nav>
   <div class="spacer"></div>
   <button class="theme-btn" id="theme" title="Theme">Auto</button>
 </header>
@@ -733,8 +758,9 @@ function renderGame(key, ply) {
           <button data-go="start" title="Start (Home)">⏮</button><button data-go="prev" title="Back (←)">◀</button>
           <button data-go="next" title="Forward (→)">▶</button><button data-go="end" title="End (End)">⏭</button>
           <button data-go="flip" title="Flip board (F)">⇅</button>
+          <button data-go="sandbox" title="Try moves from this position with live Stockfish (S)">Sandbox</button>
         </div>
-        <div class="keys">← → to step · ↑ ↓ jump between your mistakes · F flips</div>
+        <div class="keys">← → to step · ↑ ↓ jump between your mistakes · F flips · S opens this position in the sandbox</div>
         <div class="card" style="margin-top:14px;padding:12px 14px">
           <h2>Winning chances, from your side</h2><div class="chart" id="c-eval"></div>
           <div class="legend"><span><i style="background:var(--blunder)"></i>Blunder</span><span><i style="background:var(--mistake)"></i>Mistake</span><span><i style="background:var(--claude)"></i>Claude commented</span></div>
@@ -866,6 +892,7 @@ function step(what) {
   else if (what === "prev") setPly(cur - 1);
   else if (what === "next") setPly(cur + 1);
   else if (what === "flip") { flip = !flip; update(); }
+  else if (what === "sandbox") sbOpen(cur ? G.plies[cur - 1].fen : G.start_fen, flip);
 }
 function jumpMistake(dir) {
   const bad = G.plies.filter((p) => myPly(G, p) && (p.cls === "mistake" || p.cls === "blunder" || commentFor(p.ply))).map((p) => p.ply);
@@ -874,7 +901,7 @@ function jumpMistake(dir) {
 }
 document.addEventListener("keydown", (e) => {
   if (!G || !location.hash.startsWith("#/game/") || e.metaKey || e.ctrlKey || e.altKey) return;
-  const k = { ArrowLeft: "prev", ArrowRight: "next", Home: "start", End: "end", f: "flip", F: "flip" }[e.key];
+  const k = { ArrowLeft: "prev", ArrowRight: "next", Home: "start", End: "end", f: "flip", F: "flip", s: "sandbox", S: "sandbox" }[e.key];
   if (k) { e.preventDefault(); step(k); }
   else if (e.key === "ArrowDown") { e.preventDefault(); jumpMistake(1); }
   else if (e.key === "ArrowUp") { e.preventDefault(); jumpMistake(-1); }
@@ -963,7 +990,7 @@ function pzDraw() {
   if (S.hint && m && m.rule && !S.done) s += `<div class="claude"><div class="who">Hint</div><p class="rule">${mdInline(m.rule)}</p></div>`;
   if (S.done && m) s += `<div class="claude"><div class="who">Claude</div><p>${mdInline(m.comment)}</p>${m.instead ? `<p><b>Instead:</b> ${mdInline(m.instead)}</p>` : ""}${m.rule ? `<p class="rule">Rule: ${mdInline(m.rule)}</p>` : ""}</div>`;
   s += `<div class="pz-actions">${S.done
-    ? `<button class="primary" id="pz-go-next">Next puzzle ▶</button><button id="pz-retry">Try again</button><button id="pz-game">Open the game here</button>`
+    ? `<button class="primary" id="pz-go-next">Next puzzle ▶</button><button id="pz-retry">Try again</button><button id="pz-game">Open the game here</button><button id="pz-sandbox">Explore in sandbox</button>`
     : `${m && m.rule ? `<button id="pz-hint">Hint</button>` : ""}<button id="pz-show">Show answer</button>`}</div>`;
   const now = document.getElementById("pz-now");
   now.innerHTML = s;
@@ -971,6 +998,7 @@ function pzDraw() {
   on("pz-go-next", () => pzStep(1));
   on("pz-retry", () => { PZS = null; renderPuzzles(S.pz.id); });
   on("pz-game", () => go(S.pz.key, S.pz.ply - 1));
+  on("pz-sandbox", () => sbOpen(S.pz.steps[0].fen, S.g.colour === "black"));
   on("pz-hint", () => { S.hint = true; pzDraw(); });
   on("pz-show", () => {
     pzMiss();
@@ -1298,6 +1326,451 @@ function drMove(from, to) {
   }, 300);
 }
 
+// ---------- sandbox: a free board with live Stockfish ----------
+// Set up any position and play moves for either side. sandbox.py (run in Terminal) supplies the legal
+// moves from python-chess and streams Stockfish's best lines while it thinks, so this page never decides
+// the rules itself. Every move played is graded against what Stockfish wanted, like the game reviews.
+const SB_URL = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const PIECE_NAME = { k: "king", q: "queen", r: "rook", b: "bishop", n: "knight", p: "pawn" };
+let SB = null, sbES = null, sbPoll = null, sbLinesN = 3;
+try { sbLinesN = +localStorage.getItem("chess-sandbox-lines") || 3; } catch (e) { sbLinesN = 3; }
+const sbOpen = (fen, flipIt) => { location.hash = `#/sandbox/${encodeURIComponent(fen)}${flipIt ? "/flip" : ""}`; };
+const sbOn = () => !!SB && location.hash.startsWith("#/sandbox") && !!document.getElementById("sb-now");
+const sbFen = () => SB.cur ? SB.line[SB.cur - 1].fen : SB.root;
+const sbHere = () => SB.an && !SB.edit && SB.an.fen === sbFen() ? SB.an : null;   // analysis of the position on the board
+const sbFetch = (path) => fetch(SB_URL + path).then((r) => r.ok ? r.json() : Promise.reject(new Error(String(r.status))));
+const sbLabel = (n) => `${n.no}${n.white ? "." : "…"}${n.san}`;
+// The board part of a FEN as 8 rows of 8 (row 0 is rank 8), or null if it's malformed.
+function fenGrid(fen) {
+  const rows = String(fen || "").trim().split(/\s+/)[0].split("/");
+  if (rows.length !== 8) return null;
+  const g = rows.map((r) => r.replace(/[1-8]/g, (d) => ".".repeat(+d)).split(""));
+  return g.every((r) => r.length === 8 && r.every((c) => ".pnbrqkPNBRQK".includes(c))) ? g : null;
+}
+function sbSave() {
+  try { localStorage.setItem("chess-sandbox", JSON.stringify({ root: SB.root, line: SB.line, cur: SB.cur, flip: SB.flip })); } catch (e) { /* private mode: the board just won't survive a reload */ }
+}
+function sbRestore() {
+  try {
+    const s = JSON.parse(localStorage.getItem("chess-sandbox") || "null");
+    if (s && fenGrid(s.root) && Array.isArray(s.line) && s.line.every((n) => n && fenGrid(n.fen))) {
+      return { root: s.root, line: s.line, cur: Math.max(0, Math.min(s.line.length, +s.cur || 0)), flip: !!s.flip };
+    }
+  } catch (e) { /* fall through to a fresh board */ }
+  return null;
+}
+// Win% the mover gave away, once Stockfish has seen the positions before and after the move.
+function sbLost(n) {
+  if (!n.pre || n.cp == null) return null;
+  return n.white ? winPct(n.pre.cp) - winPct(n.cp) : winPct(-n.pre.cp) - winPct(-n.cp);
+}
+// Same thresholds as build.py's classify.
+function sbCls(n) {
+  const lost = sbLost(n);
+  if (lost == null) return null;
+  return n.uci === n.pre.uci ? "best" : lost >= 20 ? "blunder" : lost >= 10 ? "mistake" : lost >= 5 ? "inaccuracy" : "good";
+}
+// "14.Nf3 Nc6 15.Bb5" from SAN moves played from this FEN.
+function sbPV(fen, sans) {
+  const parts = fen.split(" ");
+  let no = +parts[5] || 1, white = parts[1] === "w";
+  return sans.map((s, i) => { const t = white ? `${no}.${s}` : i ? s : `${no}…${s}`; if (!white) no++; white = !white; return t; }).join(" ");
+}
+
+function renderSandbox(fen, flipIt) {
+  if (fen && fenGrid(fen)) SB = { root: fen, line: [], cur: 0, flip: flipIt };
+  else if (!SB) SB = sbRestore() || { root: START_FEN, line: [], cur: 0, flip: false };
+  Object.assign(SB, { sel: null, promo: null, hover: null, hold: false, legal: null, an: null, online: null, edit: SB.edit || null, paused: !!SB.paused });
+  if (fen) history.replaceState(null, "", "#/sandbox");
+  sbSave();
+  app.innerHTML = `
+    <div class="game" id="sb">
+      <div>
+        <div class="sb-wrap"><div class="evalbar" id="sb-bar"><div></div></div>
+          <div class="board-wrap"><div class="board" id="board"></div><div id="arrows"></div></div></div>
+        <div class="controls">
+          <button data-act="first" title="Start (Home)">⏮</button><button data-act="prev" title="Back (←)">◀</button>
+          <button data-act="next" title="Forward (→)">▶</button><button data-act="last" title="End (End)">⏭</button>
+          <button data-act="flip" title="Flip board (F)">⇅</button>
+        </div>
+        <div class="pz-actions" id="sb-tools"></div>
+        <div class="keys">Click a piece, then its square, for either side. ← → step · F flips</div>
+      </div>
+      <div class="stack">
+        <div class="card now" id="sb-now"></div>
+        <div class="card"><h2>Stockfish <span id="sb-depth" style="color:var(--muted);font-weight:450"></span></h2>
+          <div class="chips" id="sb-opts" style="margin:8px 0 6px"></div><div id="sb-lines"></div></div>
+        <div class="card" id="sb-side"></div>
+      </div>
+    </div>`;
+  const root = document.getElementById("sb"), lines = document.getElementById("sb-lines");
+  root.addEventListener("click", sbOnClick);
+  root.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target.id === "sb-fen") sbAct("e-load"); });
+  // Lines redraw as Stockfish thinks; hold them still while pressed so the click lands.
+  lines.addEventListener("pointerdown", () => { SB.hold = true; });
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) lines.addEventListener(t, () => { if (SB.hold) { SB.hold = false; setTimeout(sbEngine, 0); } });
+  lines.addEventListener("mouseover", (ev) => { const l = ev.target.closest("[data-line]"), i = l ? +l.dataset.line : null; if (i !== SB.hover) { SB.hover = i; sbArrows(); } });
+  lines.addEventListener("mouseleave", () => { SB.hover = null; sbArrows(); });
+  if (SB.edit) sbDraw(); else sbLoad();
+}
+function sbOnClick(ev) {
+  const t = ev.target.closest("[data-act],[data-mv],[data-piece],[data-sq],[data-lines],[data-line]");
+  if (!t || !SB) return;
+  if (t.dataset.sq) return sbClick(t.dataset.sq);
+  if (t.dataset.mv) return sbSetCur(+t.dataset.mv);
+  if (t.dataset.line) return sbPlayLine(+t.dataset.line);
+  if (t.dataset.piece) { SB.edit.piece = t.dataset.piece; return sbSide(); }
+  if (t.dataset.lines) {
+    sbLinesN = +t.dataset.lines;
+    try { localStorage.setItem("chess-sandbox-lines", String(sbLinesN)); } catch (e) { /* fine */ }
+    sbOpts(); return sbRestart();
+  }
+  sbAct(t.dataset.act, t);
+}
+function sbAct(act, el) {
+  const S = SB;
+  switch (act) {
+    case "first": return sbSetCur(0);
+    case "prev": return sbSetCur(S.cur - 1);
+    case "next": return sbSetCur(S.cur + 1);
+    case "last": return sbSetCur(S.line.length);
+    case "flip": S.flip = !S.flip; sbSave(); return sbDraw();
+    case "edit":
+      sbStop();
+      S.edit = { grid: fenGrid(sbFen()), turn: sbFen().split(" ")[1] === "b" ? "b" : "w", piece: "P", msg: null };
+      S.sel = null; S.promo = null;
+      return sbDraw();
+    case "newgame": S.root = START_FEN; S.line = []; S.cur = 0; sbSave(); return sbLoad();
+    case "copy": return sbCopy(el);
+    case "pause": {
+      const an = sbHere();
+      if (!S.paused && an && (an.busy || an.stopped)) return sbRestart();   // shown as Resume
+      S.paused = !S.paused; sbOpts();
+      return S.paused ? (sbStop(), sbLive()) : sbRestart();
+    }
+    case "promo": return sbPlay(el.dataset.uci);
+    case "promo-cancel": S.promo = null; sbTools(); sbBoard(); return sbNow();
+    // the position editor
+    case "turn": S.edit.turn = el.dataset.v; S.edit.msg = null; return sbDraw();
+    case "e-start": S.edit.grid = fenGrid(START_FEN); S.edit.turn = "w"; S.edit.msg = null; return sbDraw();
+    case "e-empty": S.edit.grid = fenGrid("8/8/8/8/8/8/8/8"); S.edit.msg = null; return sbDraw();
+    case "e-load": {
+      const v = document.getElementById("sb-fen").value.trim(), parts = v.split(/\s+/);
+      if (!fenGrid(v)) { S.edit.msg = "That isn't a FEN. One looks like <code>4k3/8/8/8/8/8/8/4K2R w K - 0 1</code>."; return sbNow(); }
+      S.edit.grid = fenGrid(v); S.edit.turn = parts[1] === "b" ? "b" : "w"; S.edit.msg = null;
+      sbDraw();
+      return sbEditDone(parts.length > 1 ? v : `${v} w - - 0 1`);
+    }
+    case "e-done": return sbEditDone(sbEditFen());
+    case "e-cancel": S.edit = null; return sbLoad();
+  }
+}
+function sbSetCur(i) {
+  i = Math.max(0, Math.min(SB.line.length, i));
+  if (i === SB.cur && !SB.edit) return;
+  SB.cur = i; SB.promo = null; sbSave(); sbLoad();
+}
+// A new position on the board: ask sandbox.py for its legal moves, then start Stockfish on it.
+async function sbLoad() {
+  const fen = sbFen();
+  SB.edit = null; SB.legal = null; SB.sel = null;
+  sbStop(); sbDraw();
+  let L;
+  try { L = await sbFetch("/moves?fen=" + encodeURIComponent(fen)); }
+  catch (e) { if (sbOn() && !SB.edit && sbFen() === fen) sbOffline(); return; }
+  if (!sbOn() || SB.edit || sbFen() !== fen) return;   // moved on meanwhile
+  SB.online = true; SB.legal = L;
+  const n = SB.line[SB.cur - 1];
+  if (n && L.over) { n.cp = L.over === "checkmate" ? (n.white ? 10000 : -10000) : 0; n.depth = 99; sbSave(); }
+  sbBoard(); sbRestart();
+}
+function sbRestart() {
+  sbStop();
+  const L = SB.legal;
+  if (SB.online && L && !L.over && !L.problems.length && !SB.paused && !SB.edit && !document.hidden) sbAnalyse();
+  else sbLive();
+}
+// Lines showing the same eval keep the order they had, so equal moves don't swap places every depth.
+function sbSteady(prev, lines, white) {
+  const rank = (l) => { const i = prev.findIndex((p) => p.uci[0] === l.uci[0]); return i < 0 ? 99 : i; };
+  const key = (l) => { const v = Math.abs(l.cp) >= MATE ? l.cp : Math.round(l.cp / 10); return white ? v : -v; };
+  return [...lines].sort((a, b) => key(b) - key(a) || rank(a) - rank(b));
+}
+function sbAnalyse(retry = 0) {
+  const fen = sbFen(), white = fen.split(" ")[1] === "w";
+  const es = new EventSource(`${SB_URL}/analyse?fen=${encodeURIComponent(fen)}&lines=${sbLinesN}`);
+  const an = SB.an = { fen, depth: 0, lines: [], done: false, busy: false, stopped: false };
+  sbES = es;
+  sbOpts(); sbLive();
+  es.onmessage = (ev) => {
+    if (sbES !== es || !sbOn()) return;
+    const d = JSON.parse(ev.data), deeper = d.depth !== an.depth;
+    an.depth = d.depth; an.lines = sbSteady(an.lines, d.lines, white);
+    sbAbsorb();
+    if (deeper) sbSave();
+    sbLive();
+  };
+  const end = (what) => {
+    if (sbES !== es) return false;
+    es.close(); sbES = null;
+    if (!sbOn() || SB.an !== an) return false;
+    an[what] = true; sbOpts(); sbLive();
+    return true;
+  };
+  es.addEventListener("done", () => { if (end("done")) sbSave(); });
+  // Another tab asked for Stockfish. Don't fight it for the engine: wait for Resume, a move, or this tab coming back.
+  es.addEventListener("busy", () => end("busy"));
+  // A dropped stream isn't proof the helper is gone: ask it. Running → try once more, then leave it to Resume.
+  es.onerror = () => {
+    if (sbES !== es) return;
+    es.close(); sbES = null;
+    sbFetch("/ping").then(() => {
+      if (!sbOn() || SB.an !== an) return;
+      if (retry < 1) setTimeout(() => { if (sbOn() && SB.an === an && !sbES) sbAnalyse(retry + 1); }, 1000);
+      else { an.stopped = true; sbOpts(); sbLive(); }
+    }, () => { if (sbOn() && SB.an === an) sbOffline(); });
+  };
+}
+function sbStop() { if (sbES) { sbES.close(); sbES = null; } }
+function sbLeave() { sbStop(); clearInterval(sbPoll); sbPoll = null; }
+function sbOffline() {
+  SB.online = false;
+  sbStop(); sbDraw();
+  if (sbPoll) return;
+  sbPoll = setInterval(() => {
+    if (!sbOn()) { clearInterval(sbPoll); sbPoll = null; return; }
+    sbFetch("/ping").then(() => {
+      if (!sbPoll) return;
+      clearInterval(sbPoll); sbPoll = null;
+      if (!sbOn()) return;
+      if (SB.edit) { SB.online = true; sbLive(); } else sbLoad();
+    }, () => { /* still not running */ });
+  }, 2000);
+}
+// Fold the latest analysis into the moves around this position: the eval after the move that led
+// here, and what Stockfish wanted instead of the move played from here. Deeper results win.
+function sbAbsorb() {
+  const an = sbHere(), top = an && an.lines[0];
+  if (!top) return;
+  const here = SB.line[SB.cur - 1], next = SB.line[SB.cur];
+  if (here && an.depth >= (here.depth || 0)) { here.cp = top.cp; here.depth = an.depth; }
+  if (next && an.depth >= (next.pre?.depth || 0)) next.pre = { cp: top.cp, uci: top.uci[0], san: top.san[0], depth: an.depth };
+}
+function sbPlay(uci) {
+  const L = SB.legal, mv = L && L.moves[uci];
+  if (!mv) return;
+  SB.promo = null;
+  if (SB.line[SB.cur] && SB.line[SB.cur].uci === uci) return sbSetCur(SB.cur + 1);   // same move as before: keep the line
+  const parts = sbFen().split(" "), an = sbHere(), top = an && an.lines[0];
+  const n = { uci, san: mv.san, fen: mv.fen, white: parts[1] === "w", no: +parts[5] || 1 };
+  if (top) n.pre = { cp: top.cp, uci: top.uci[0], san: top.san[0], depth: an.depth };
+  SB.line = SB.line.slice(0, SB.cur);
+  SB.line.push(n); SB.cur++;
+  sbSave(); sbLoad();
+}
+function sbPlayLine(i) { const an = sbHere(), l = an && an.lines[i]; if (l && !SB.promo) sbPlay(l.uci[0]); }
+function sbClick(sq) {
+  if (SB.edit) return sbEditClick(sq);
+  const L = SB.legal;
+  if (!L || SB.promo) return;
+  if (SB.sel) {
+    const hits = Object.keys(L.moves).filter((u) => u.startsWith(SB.sel + sq));
+    if (hits.length > 1) { SB.promo = hits; SB.sel = null; sbTools(); sbBoard(); return sbNow(); }
+    if (hits.length) return sbPlay(hits[0]);
+  }
+  SB.sel = Object.keys(L.moves).some((u) => u.startsWith(sq)) && SB.sel !== sq ? sq : null;
+  sbBoard();
+}
+function sbCopy(el) {
+  const fen = SB.edit ? sbEditFen() : sbFen();
+  const ok = () => { el.textContent = "Copied ✓"; setTimeout(() => { el.textContent = "Copy FEN"; }, 1200); };
+  const ask = () => prompt("FEN — copy it from here:", fen);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(fen).then(ok, ask);
+  else ask();
+}
+function sbEditFen() {
+  const E = SB.edit, g = E.grid, at = (sq) => g[8 - +sq[1]]["abcdefgh".indexOf(sq[0])];
+  let c = "";
+  if (at("e1") === "K") c += (at("h1") === "R" ? "K" : "") + (at("a1") === "R" ? "Q" : "");
+  if (at("e8") === "k") c += (at("h8") === "r" ? "k" : "") + (at("a8") === "r" ? "q" : "");
+  return g.map((r) => r.join("").replace(/\.+/g, (m) => m.length)).join("/") + ` ${E.turn} ${c || "-"} - 0 1`;
+}
+function sbEditClick(sq) {
+  const E = SB.edit, f = "abcdefgh".indexOf(sq[0]), r = 8 - +sq[1], p = E.piece;
+  if (p === "x" || E.grid[r][f] === p) E.grid[r][f] = ".";
+  else {
+    if (p === "K" || p === "k") E.grid.forEach((row) => row.forEach((c, i) => { if (c === p) row[i] = "."; }));
+    E.grid[r][f] = p;
+  }
+  E.msg = null;
+  sbBoard(); sbNow(); sbSide();
+}
+async function sbEditDone(fen) {
+  const E = SB.edit;
+  let L;
+  try { L = await sbFetch("/moves?fen=" + encodeURIComponent(fen)); }
+  catch (e) {
+    if (sbOn() && SB.edit === E) { E.msg = "Stockfish isn't running, so the position can't be checked yet. Start <code>sandbox.py</code> and press Done again."; sbNow(); }
+    return;
+  }
+  if (!sbOn() || SB.edit !== E) return;
+  SB.online = true;
+  if (L.problems.length) { E.msg = "Not a legal position yet. " + L.problems.map(esc).join(" "); return sbNow(); }
+  SB.root = L.fen; SB.line = []; SB.cur = 0; SB.edit = null;
+  sbSave(); sbLoad();
+}
+
+// ----- drawing. The board squares are redrawn only by clicks and new positions, never by analysis.
+// Replace a card's HTML only when it changed, so a redraw doesn't swallow a click mid-press.
+function sbSet(id, html) {
+  const el = document.getElementById(id);
+  if (!el || el._html === html) return false;
+  el.innerHTML = html; el._html = html;
+  return true;
+}
+function sbDraw() { if (!sbOn()) return; sbBoard(); sbTools(); sbOpts(); sbLive(); }
+function sbLive() { if (!sbOn()) return; sbArrows(); sbBar(); sbNow(); sbEngine(); sbSide(); }
+function sbBoard() {
+  const el = document.getElementById("board");
+  if (!el) return;
+  const n = SB.line[SB.cur - 1], L = SB.legal;
+  const hi = SB.promo ? [SB.promo[0].slice(0, 2), SB.promo[0].slice(2, 4)] : !SB.edit && n ? [n.uci.slice(0, 2), n.uci.slice(2, 4)] : [];
+  const pick = SB.edit ? { sel: null, targets: [] }
+    : L && !SB.promo ? { sel: SB.sel, targets: SB.sel ? Object.keys(L.moves).filter((u) => u.startsWith(SB.sel)).map((u) => u.slice(2, 4)) : [] } : null;
+  el.innerHTML = boardHTML(SB.edit ? sbEditFen() : sbFen(), SB.flip, hi, pick);
+  sbArrows();
+}
+function sbArrows() {
+  const el = document.getElementById("arrows");
+  if (!el) return;
+  const an = sbHere(), l = an && !SB.promo && an.lines[SB.hover ?? 0];
+  sbSet("arrows", arrowsSVG(l ? [{ uci: l.uci[0], color: css(SB.hover ? "--accent" : "--best") }] : [], SB.flip));
+}
+function sbBar() {
+  const bar = document.getElementById("sb-bar");
+  if (!bar) return;
+  const an = sbHere(), L = SB.legal, white = sbFen().split(" ")[1] === "w";
+  let cp = an && an.lines[0] ? an.lines[0].cp : null;
+  if (!SB.edit && L && L.over) cp = L.over === "checkmate" ? (white ? -10000 : 10000) : 0;
+  bar.classList.toggle("flip", SB.flip);
+  if (cp == null) return;   // keep the last reading until the new one arrives
+  bar.firstElementChild.style.height = (Math.abs(cp) >= MATE ? (cp > 0 ? 100 : 0) : winPct(cp)).toFixed(1) + "%";
+  bar.title = `${fmtEval(cp)} · the white part is White's winning chances`;
+}
+function sbTools() {
+  const el = document.getElementById("sb-tools");
+  if (!el) return;
+  if (SB.promo) {
+    const w = sbFen().split(" ")[1] === "w", order = "qrbn";
+    el.innerHTML = `<span style="align-self:center;font-weight:600">Promote to</span>` + [...SB.promo].sort((a, b) => order.indexOf(a[4]) - order.indexOf(b[4]))
+      .map((u) => `<button data-act="promo" data-uci="${u}" title="${PIECE_NAME[u[4]]}"><span class="pc glyph ${w ? "w" : "b"}">${GLYPH[u[4]]}︎</span></button>`).join("")
+      + `<button data-act="promo-cancel">Cancel</button>`;
+  } else el.innerHTML = SB.edit ? "" : `<button data-act="edit">Edit position</button><button data-act="newgame">Start position</button><button data-act="copy">Copy FEN</button>`;
+}
+function sbOpts() {
+  const an = sbHere(), resume = SB.paused || (an && (an.busy || an.stopped));
+  sbSet("sb-opts", [1, 3, 5].map((k) => `<button data-lines="${k}" class="${k === sbLinesN ? "on" : ""}">${k} line${k > 1 ? "s" : ""}</button>`).join("")
+    + `<button data-act="pause">${resume ? "▶ Resume" : "❚❚ Pause"}</button>`);
+}
+function sbNow() {
+  const S = SB;
+  if (S.edit) {
+    return sbSet("sb-now", `<h3>Set up a position</h3>
+      <p class="pz-from">Pick a piece, then click squares to put it there; click it again to take it off. Kings move rather than multiply. Castling is allowed when a king and rook stand on their starting squares.</p>
+      ${S.edit.msg ? `<div class="verdict bad">${S.edit.msg}</div>` : ""}`);
+  }
+  const white = sbFen().split(" ")[1] === "w", L = S.legal, n = S.line[S.cur - 1];
+  const title = !L ? `${white ? "White" : "Black"} to move`
+    : L.problems.length ? "This position isn't legal"
+    : L.over === "checkmate" ? `Checkmate — ${white ? "Black" : "White"} wins`
+    : L.over === "stalemate" ? "Stalemate — a draw"
+    : L.over === "insufficient" ? "Draw — neither side has enough pieces left to mate"
+    : `${white ? "White" : "Black"} to move${L.check ? ", in check" : ""}`;
+  let s = `<h3>${esc(title)}</h3>`;
+  if (L && L.problems.length) s += `<div class="verdict bad">${L.problems.map(esc).join(" ")} Use <b>Edit position</b> to fix it.</div>`;
+  if (S.promo) s += `<p class="pz-from">Choose the piece to promote to, under the board.</p>`;
+  if (n) {
+    const c = sbCls(n), lost = sbLost(n);
+    s += `<dl><dt>Last move</dt><dd><b>${esc(sbLabel(n))}</b>${c ? ` <span class="cls"><i class="i-${c}"></i>${CLS[c].label}${CLS[c].sym && c !== "best" ? " " + CLS[c].sym : ""}</span>` : ""}</dd>`;
+    if (c) {
+      s += `<dt>Eval</dt><dd>${fmtEval(n.pre.cp)} → <b>${fmtEval(n.cp)}</b>${lost >= 1 ? ` · cost ${lost.toFixed(0)}% of ${n.white ? "White" : "Black"}'s winning chances` : ""}</dd>`;
+      if (c !== "best") s += `<dt>Stockfish wanted</dt><dd><b style="color:var(--good-text)">${esc(n.pre.san)}</b> (${fmtEval(n.pre.cp)})</dd>`;
+    } else {
+      s += `<dt>Grade</dt><dd style="color:var(--muted)">${n.pre ? "waiting for Stockfish to look at this position" : "not graded: Stockfish hadn't looked at the position before it. Step back one move to grade it."}</dd>`;
+    }
+    s += `</dl>`;
+  } else s += `<p class="empty">Play moves for either side. Stockfish's best lines update while it thinks, and every move you make is graded against what it wanted.</p>`;
+  s += `<p class="pz-from" style="margin-top:10px">Evals are from White's side: + means White is better.</p>`;
+  sbSet("sb-now", s);
+}
+function sbEngine() {
+  const S = SB, an = sbHere(), L = S.legal, dep = document.getElementById("sb-depth");
+  if (dep) dep.textContent = an && an.depth ? `· depth ${an.depth}${an.done ? ", done" : S.paused || an.busy || an.stopped ? ", paused" : ""}` : "";
+  if (S.hold) return;
+  const k = L ? Math.min(sbLinesN, Object.keys(L.moves).length) : sbLinesN;
+  let s;
+  if (S.edit) s = `<p class="empty">Waiting while you set up the position.</p>`;
+  else if (S.online === false) {
+    s = `<p><b>Stockfish isn't running.</b> In Terminal, in this folder, run:</p><code class="cmd">.venv/bin/python sandbox.py</code>
+      <p class="pz-from">Leave that window open while you use this tab. This page connects by itself within a couple of seconds. If it never does, open <a href="http://127.0.0.1:8765/#/sandbox">127.0.0.1:8765</a> instead.</p>`;
+  } else if (S.online === null) s = `<p class="empty">Connecting to Stockfish…</p>`;
+  else if (L && L.problems.length) s = `<p class="empty">Stockfish can't look at an illegal position.</p>`;
+  else if (L && L.over) s = `<p class="empty">The game is over, so there's nothing to look at.</p>`;
+  else if (an && an.lines.length) {
+    const fen = sbFen();
+    s = an.lines.map((l, i) => { const pv = sbPV(fen, l.san); return `<div class="sb-line" data-line="${i}" title="${esc(pv)}"><b class="ev">${fmtEval(l.cp)}</b><span>${esc(pv)}</span></div>`; }).join("")
+      + (an.busy ? `<div class="verdict">Another Sandbox tab is using Stockfish now. Press <b>Resume</b> or make a move to bring it back here.</div>`
+        : an.stopped ? `<div class="verdict">Stockfish stopped unexpectedly. Press <b>Resume</b> to start it again.</div>`
+        : `<p class="pz-from" style="margin-top:6px">Hover a line to see its first move; click to play it.</p>`);
+  } else if (an && an.busy) s = `<div class="verdict">Another Sandbox tab is using Stockfish now. Press <b>Resume</b> or make a move to bring it back here.</div>`;
+  else if (an && an.stopped) s = `<div class="verdict">Stockfish stopped unexpectedly. Press <b>Resume</b> to start it again.</div>`;
+  else if (S.paused) s = `<p class="empty">Paused.</p>`;
+  // one placeholder row per line while the first depth comes in, so the cards below don't jump
+  else s = Array.from({ length: k }, (_, i) => `<div class="sb-line wait"><b class="ev">…</b><span>${i ? "" : "Thinking…"}</span></div>`).join("")
+    + `<p class="pz-from" style="margin-top:6px">Hover a line to see its first move; click to play it.</p>`;
+  sbSet("sb-lines", s);
+}
+function sbSide() {
+  const S = SB;
+  if (S.edit) {
+    const E = S.edit, pal = ["K", "Q", "R", "B", "N", "P", "x", "k", "q", "r", "b", "n", "p"];
+    return sbSet("sb-side", `<h2>Pieces</h2>
+      <div class="palette">${pal.map((p) => {
+        const w = p === p.toUpperCase();
+        return `<button data-piece="${p}" class="${E.piece === p ? "on" : ""}" title="${p === "x" ? "Eraser" : `${w ? "White" : "Black"} ${PIECE_NAME[p.toLowerCase()]}`}">${p === "x"
+          ? `<span class="glyph" style="font-size:20px">✕</span>` : `<span class="pc glyph ${w ? "w" : "b"}">${GLYPH[p.toLowerCase()]}︎</span>`}</button>`;
+      }).join("")}</div>
+      <div class="chips"><button data-act="turn" data-v="w" class="${E.turn === "w" ? "on" : ""}">White to move</button><button data-act="turn" data-v="b" class="${E.turn === "b" ? "on" : ""}">Black to move</button>
+        <button data-act="e-start">Start position</button><button data-act="e-empty">Empty board</button></div>
+      <div class="fen-row"><input id="sb-fen" value="${esc(sbEditFen())}" spellcheck="false" autocomplete="off" aria-label="FEN"><button data-act="e-load">Load FEN</button></div>
+      <div class="pz-actions"><button class="primary" data-act="e-done">Done</button><button data-act="e-cancel">Cancel</button><button data-act="copy">Copy FEN</button></div>`);
+  }
+  let s = "";
+  S.line.forEach((n, i) => {
+    if (n.white) s += `<span class="no">${n.no}.</span>`;
+    else if (i === 0) s += `<span class="no">${n.no}.</span><span></span>`;
+    const c = sbCls(n), k = c && CLS[c];
+    s += `<button data-mv="${i + 1}" class="${S.cur === i + 1 ? "cur" : ""}" title="${k ? k.label : "Not graded yet"}"><i class="cls"><i class="i-${c || "none"}"></i></i>${esc(n.san)}${k && k.sym && c !== "best" ? `<span class="sym" style="color:var(--${c})">${k.sym}</span>` : ""}</button>`;
+  });
+  const html = `<h2>Moves</h2><p class="sub">${S.line.length ? "Click a move to go back to it. A different move from there replaces the rest of the line." : "Moves you play for either side appear here, each graded the way the game reviews are."}</p>${s ? `<div class="moves">${s}</div>` : ""}`;
+  if (!sbSet("sb-side", html)) return;
+  // keep the current move in view inside the list, without scrolling the page
+  const box = document.querySelector("#sb-side .moves"), b = box && box.querySelector("button.cur");
+  if (b) { const r = b.getBoundingClientRect(), R = box.getBoundingClientRect(); if (r.top < R.top || r.bottom > R.bottom) box.scrollTop += r.top - R.top - R.height / 2; }
+}
+document.addEventListener("keydown", (e) => {
+  if (!sbOn() || SB.edit || e.metaKey || e.ctrlKey || e.altKey || (e.target.closest && e.target.closest("input, textarea"))) return;
+  const k = { ArrowLeft: "prev", ArrowRight: "next", Home: "first", End: "last", f: "flip", F: "flip" }[e.key];
+  if (k) { e.preventDefault(); sbAct(k); }
+});
+// A hidden tab stops Stockfish; coming back picks up again.
+document.addEventListener("visibilitychange", () => {
+  if (!sbOn()) return;
+  if (document.hidden) sbStop();
+  else if (!sbES && !(SB.an && SB.an.done && SB.an.fen === sbFen())) sbRestart();
+});
+
 // ---------- routing + theme ----------
 function go(key, ply) { location.hash = `#/game/${encodeURIComponent(key)}/${ply ?? 0}`; }
 function route() {
@@ -1309,9 +1782,13 @@ function route() {
   document.getElementById("nav-repertoire").classList.toggle("on", h.startsWith("#/repertoire"));
   document.getElementById("nav-puzzles").classList.toggle("on", h.startsWith("#/puzzles"));
   document.getElementById("nav-drills").classList.toggle("on", h.startsWith("#/drills"));
+  document.getElementById("nav-sandbox").classList.toggle("on", h.startsWith("#/sandbox"));
   const dm = h.match(/^#\/drills(?:\/(\w+))?/);
   if (!dm) { DR = null; clearInterval(drTimer); }
-  else { G = null; PZS = null; if (!DR || DR.kind !== dm[1]) renderDrills(dm[1]); return; }
+  else { G = null; PZS = null; sbLeave(); if (!DR || DR.kind !== dm[1]) renderDrills(dm[1]); return; }
+  const sm = h.match(/^#\/sandbox(?:\/([^/]+)(\/flip)?)?/);
+  if (!sm) sbLeave();
+  else { G = null; PZS = null; renderSandbox(sm[1] && decodeURIComponent(sm[1]), !!sm[2]); return; }
   const pm = h.match(/^#\/puzzles(?:\/([^/]+))?/);
   if (pm) { G = null; if (!PZS || PZS.pz.id !== decodeURIComponent(pm[1] || "")) renderPuzzles(pm[1] && decodeURIComponent(pm[1])); return; }
   PZS = null;
